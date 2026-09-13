@@ -1,6 +1,6 @@
 # FilterFitter
 
-![filtered cubemap showcase](cube.png)
+![filtered cubemap showcase](Images/cube.png)
 
 FilterFitter generates the small lookup tables that blur reflection probes.
 
