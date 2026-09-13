@@ -308,12 +308,6 @@ Every difference between this implementation and the paper, with the reason for 
 
 ## 8. Using the tool
 
-Build the tool:
-
-```
-External\FilterFitter\BuildFilterFitter.bat
-```
-
 Fit a table, then write it out:
 
 ```
@@ -355,6 +349,18 @@ Ingest decodes each panorama into the selected base map and caches it. The two m
 Validate convolves every environment twice, once by brute force and once from the table, and reports the difference. Both stages cache their results, so re-running them is fast. A cubemap run validates the four published tables beside the fitted one; a tetrahedral run validates the fitted table and nothing else, because the published tables are cubemap data.
 
 Results are written as EXR, one file per slice per level, under `External\FilterFitter\hdri\<environment>\<stage>\`.
+
+### The DFG table
+
+The specular split of the environment lookup is the other half of the picture: `radiance * (F0 * scale + bias)`, where `scale` and `bias` are a 128x128 lookup over `N·V` and roughness. The engine used to evaluate that integral on the GPU every frame; this tool evaluates it offline at a sample count a frame cannot afford, and the engine uploads the result.
+
+```
+EsotericaFilterFitter.exe --dfg
+```
+
+It writes `DFGTable_esoterica.bin` and `DFGTable_esoterica.h` in `External\FilterFitter\`, next to the radiance tables. The integral is the engine's own — `alpha = roughness²`, `k = roughness / 2`, the half-vector sampled from the NDF — and it is written out in `Source/DFGIntegrand.h` with the conventions beside it.
+
+The run evaluates the table, measures it against a reference at a higher sample count, compares two rows against a deterministic quadrature of the hemisphere written from the BRDF longhand, checks that every value survives the half-float storage, and prints PASS or FAIL.
 
 ### Reading a table at run time
 
@@ -436,6 +442,19 @@ Two things the runtime has to decide that the provided files do not:
 | `--irls`           | Compare the split optimizer against the joint one.                                |
 | `--converge`       | Run each level to a larger budget and report the gradient.                        |
 | `--sample-size`    | Re-score on a denser, held-out grid to measure overfitting.                       |
+
+### DFG table
+
+| option                          | effect                                                                                                             |
+|---------------------------------|--------------------------------------------------------------------------------------------------------------------|
+| `--dfg`                         | Evaluate the DFG table, validate it, and write the binary and the C header. Minutes.                                |
+| `--dfg-resolution <n>`          | Texels per axis, both spanning zero to one. Default 128, which is what the engine's lookup texture is.              |
+| `--dfg-samples <n>`             | Samples per texel in the table's own evaluation. Default 16384, which is offline accuracy rather than a frame budget. |
+| `--dfg-reference-samples <n>`   | Samples per texel in the reference it is measured against. Default 65536. Raised to twice the table's if set below. |
+| `--dfg-binary <path>`           | Where the binary goes. Default `DFGTable_esoterica.bin` in the tool's folder.                                       |
+| `--dfg-header <path>`           | Where the C header goes. Default `DFGTable_esoterica.h` in the tool's folder. An empty value skips it.              |
+
+`--profile`, `--curve` and `--widths` do not apply to `--dfg`: the integral is the engine's own and there is exactly one of it.
 
 ### HDRI radiance validation
 

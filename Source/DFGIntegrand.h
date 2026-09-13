@@ -13,11 +13,9 @@
 // where scale and bias are the integral of the specular BRDF against a constant environment over the upper hemisphere, with the Fresnel term factored out.
 //
 // This is NOT the integral as it appears in the literature.
-// It is the one the engine's own pass evaluates, down to the choice of shadowing term, and the engine is the only thing it has to agree with:
+// It is the one the engine evaluates, down to the choice of shadowing term, and the engine is the only thing it has to agree with.
 //
-//  Code/Engine/Render/Shaders/PBR/PrecomputeDFG.esf
-//
-//  Code/Engine/Render/Shaders/PBR/PBR.esh
+// For reference: Code/Engine/Render/Shaders/PBR/PBR.esh ImportanceSampleGGX, GeometrySmith, DistributionGGX, PBR::New, and the lookup in ComputeIBL
 //
 //  quantity            engine
 //  ------------------  --------------------------------------------------------------
@@ -43,8 +41,6 @@ namespace FilterFitter
 {
     namespace DFGIntegrand
     {
-        inline constexpr double Pi = 3.14159265358979323846;
-
         // Below this a cosine is treated as the zero it is approaching. Only an exact zero reaches it, since the grid's coordinates are texel centres.
         inline constexpr double MinCosine = 1.0e-6;
 

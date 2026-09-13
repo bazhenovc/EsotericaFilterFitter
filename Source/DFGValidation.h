@@ -2,7 +2,6 @@
 
 #include <cstdint>
 
-#include "DFGIntegrand.h"
 #include "DFGTable.h"
 
 // Validation of the preintegrated split-sum DFG term
@@ -14,11 +13,14 @@
 //      reference   a Cartesian stratification shifted by an irrational offset, at several times the table's sample count, so that most of the deviation between them is the table's error rather than half of each
 //
 // Sampling the NDF is what makes a table at a few thousand samples possible at all: a uniform quadrature of the hemisphere cannot resolve a lobe a thousandth of a radian wide without millions of points.
-// The price is that both are Monte Carlo, so their disagreement is bounded below by the reference's own error, and this measures that error directly - the reference at a fraction of its sample count against itself - and prints it beside the table's deviation.
+// The price is that both are Monte Carlo, so their disagreement is bounded below by the reference's own error, and this measures that error - the reference at a fraction of its sample count against itself - and prints it beside the table's deviation.
+// That second comparison is a proxy rather than a bound: the two estimates share the sequence's own construction, and what it shows is where the reference is still moving, not how far it is from the integral.
 //
 // Sampling the half-vector is also what an estimator gets wrong, and a second sampling sequence cannot catch that: two estimators that share a weight share its fault.
 // So the two rows the estimator is best conditioned at are also evaluated by a deterministic quadrature of the hemisphere, from the BRDF written out longhand rather than through the sampled estimator's expression.
-// That one shares nothing with the estimator, which is what makes it a check of it.
+//
+// What that check shares with the estimator is the conventions - the width, the shadowing term, the Fresnel term and the NDF at the half-vector - which it calls rather than repeats, because two copies of a formula are two formulae.
+// What it does not share is the sampling or the weight: it draws no half-vector and divides by no ( N.H ), so it is a check of the estimator's algebra and of nothing else.
 //-------------------------------------------------------------------------
 
 namespace FilterFitter
@@ -27,7 +29,7 @@ namespace FilterFitter
     // The cost is this many samples per texel over the whole grid, so it is the slow part of the mode.
     inline constexpr uint32_t DFGDefaultReferenceSampleCount = 65536;
 
-    // The reference's own convergence is measured at this fraction of its sample count, which bounds the reference's error from the change the extra samples make.
+    // The reference's own movement between a quarter of its sample count and all of it, which is what the second comparison prints. It is not a bound: the sequence's construction is common to both counts, so a fault in that construction is invisible here.
     inline constexpr uint32_t DFGConvergenceDivisor = 4;
 
     // Cells per axis in the deterministic quadrature, over the polar angle and the azimuth. 

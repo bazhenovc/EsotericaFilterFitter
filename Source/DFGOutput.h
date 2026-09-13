@@ -21,7 +21,7 @@
 //       8       4  resolution, the texel count per axis, the grid being square
 //      12       4  sample count per texel in the table's own evaluation
 //      16       4  values per texel, two
-//      20       4  value format, DFGValueHalf or DFGValueFloat
+//      20       4  value format, DFGValueHalf, the only one this tool writes
 //      24       4  payload offset in bytes, 64
 //      28       4  payload size in bytes
 //      32      24  name, NUL padded
@@ -51,8 +51,8 @@ namespace FilterFitter
     // Channels per texel, and the order that number implies.
     static constexpr uint32_t DFGChannelCount = 2;
 
+    // The payload's storage format. One value, and the field is in the file so that a reader can tell what it is looking at rather than assume.
     static constexpr uint32_t DFGValueHalf = 0;     // two IEEE 754 binary16
-    static constexpr uint32_t DFGValueFloat = 1;    // two IEEE 754 binary32
 
     // What the table is, in the file, because a blob found later has to say what it is.
     // The runtime's conventions are not negotiable, so a name is all this carries.

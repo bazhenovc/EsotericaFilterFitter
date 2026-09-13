@@ -33,6 +33,10 @@ namespace FilterFitter
     // The table is stored as half floats, so the count only has to be high enough that the estimate's own noise is below the storage's precision everywhere the estimator is conditioned.
     inline constexpr uint32_t DFGDefaultSampleCount = 16384;
 
+    // What the two counts are allowed to reach. The resolution sizes the texture the engine creates, and the sample counts are multiplied before they are used, so a value that was mistyped is refused rather than wrapped into a different table.
+    inline constexpr uint32_t DFGMaximumResolution = 4096;
+    inline constexpr uint32_t DFGMaximumSampleCount = 1U << 24;
+
     //-------------------------------------------------------------------------
 
     struct DFGOptions

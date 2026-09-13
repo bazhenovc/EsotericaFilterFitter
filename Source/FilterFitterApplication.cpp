@@ -22,8 +22,10 @@
 #include "LevelWidthCurve.h"
 #include "ReferencePreimage.h"
 
+#include <cerrno>
 #include <chrono>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -32,6 +34,60 @@
 #include <vector>
 
 using namespace FilterFitter;
+
+//-------------------------------------------------------------------------
+
+// Formats a derived artifact path, and refuses one that did not fit.
+//
+// A name that is cut off is not an error the caller can see: it is a shorter name, so the
+// write either fails on a path nobody meant or, worse, succeeds on a different file. The
+// artifact directory is a build-time path, so this is only reachable in a fork with a deep
+// one, which is exactly the case where a silent redirect costs an afternoon.
+static bool FormatArtifactPath( char* pBuffer, size_t bufferSize, char const* pFormat, ... )
+{
+    va_list arguments;
+    va_start( arguments, pFormat );
+
+    int const written = std::vsnprintf( pBuffer, bufferSize, pFormat, arguments );
+
+    va_end( arguments );
+
+    return ( written >= 0 ) && ( static_cast<size_t>( written ) < bufferSize );
+}
+
+// Parses a count that has to be a plain decimal number and nothing else.
+//
+// strtoul alone accepts a sign and saturates at its own limit, so a typo becomes a
+// different table rather than a refusal, and the counts here are multiplied before they
+// are used.
+static bool ParseCount( char const* pText, uint32_t maximum, uint32_t& value )
+{
+    if ( ( pText == nullptr ) || ( pText[0] == '\0' ) )
+    {
+        return false;
+    }
+
+    for ( char const* pCharacter = pText; *pCharacter != '\0'; ++pCharacter )
+    {
+        if ( ( *pCharacter < '0' ) || ( *pCharacter > '9' ) )
+        {
+            return false;
+        }
+    }
+
+    errno = 0;
+
+    unsigned long const parsed = std::strtoul( pText, nullptr, 10 );
+
+    if ( ( errno == ERANGE ) || ( parsed > maximum ) )
+    {
+        return false;
+    }
+
+    value = static_cast<uint32_t>( parsed );
+
+    return true;
+}
 
 //  FilterFitter
 //-------------------------------------------------------------------------
@@ -4764,11 +4820,9 @@ int main( int argc, char** argv )
                 return 1;
             }
 
-            dfgResolution = static_cast<uint32_t>( std::strtoul( argv[++argumentIndex], nullptr, 10 ) );
-
-            if ( dfgResolution == 0 )
+            if ( !ParseCount( argv[++argumentIndex], DFGMaximumResolution, dfgResolution ) || ( dfgResolution == 0 ) )
             {
-                std::printf( "--dfg-resolution needs a count above zero\n" );
+                std::printf( "--dfg-resolution needs a count between 1 and %u\n", DFGMaximumResolution );
                 return 1;
             }
         }
@@ -4780,11 +4834,9 @@ int main( int argc, char** argv )
                 return 1;
             }
 
-            dfgSampleCount = static_cast<uint32_t>( std::strtoul( argv[++argumentIndex], nullptr, 10 ) );
-
-            if ( dfgSampleCount == 0 )
+            if ( !ParseCount( argv[++argumentIndex], DFGMaximumSampleCount, dfgSampleCount ) || ( dfgSampleCount == 0 ) )
             {
-                std::printf( "--dfg-samples needs a count above zero\n" );
+                std::printf( "--dfg-samples needs a count between 1 and %u\n", DFGMaximumSampleCount );
                 return 1;
             }
         }
@@ -4796,11 +4848,9 @@ int main( int argc, char** argv )
                 return 1;
             }
 
-            dfgReferenceSampleCount = static_cast<uint32_t>( std::strtoul( argv[++argumentIndex], nullptr, 10 ) );
-
-            if ( dfgReferenceSampleCount == 0 )
+            if ( !ParseCount( argv[++argumentIndex], DFGMaximumSampleCount, dfgReferenceSampleCount ) || ( dfgReferenceSampleCount == 0 ) )
             {
-                std::printf( "--dfg-reference-samples needs a count above zero\n" );
+                std::printf( "--dfg-reference-samples needs a count between 1 and %u\n", DFGMaximumSampleCount );
                 return 1;
             }
         }
@@ -5011,8 +5061,12 @@ int main( int argc, char** argv )
         char derivedDFGBinaryPath[256] = {};
         char derivedDFGHeaderPath[256] = {};
 
-        std::snprintf( derivedDFGBinaryPath, sizeof( derivedDFGBinaryPath ), FF_ARTIFACT_DIRECTORY "/DFGTable_%s.bin", DFGTableName );
-        std::snprintf( derivedDFGHeaderPath, sizeof( derivedDFGHeaderPath ), FF_ARTIFACT_DIRECTORY "/DFGTable_%s.h", DFGTableName );
+        if ( !FormatArtifactPath( derivedDFGBinaryPath, sizeof( derivedDFGBinaryPath ), FF_ARTIFACT_DIRECTORY "/DFGTable_%s.bin", DFGTableName )
+          || !FormatArtifactPath( derivedDFGHeaderPath, sizeof( derivedDFGHeaderPath ), FF_ARTIFACT_DIRECTORY "/DFGTable_%s.h", DFGTableName ) )
+        {
+            std::printf( "the artifact directory is too long for the derived DFG name: %s\n", FF_ARTIFACT_DIRECTORY );
+            return 1;
+        }
 
         char const* const dfgBinaryOutputPath = ( pDFGBinaryPath != nullptr ) ? pDFGBinaryPath : derivedDFGBinaryPath;
 
@@ -5121,15 +5175,17 @@ int main( int argc, char** argv )
     char checkpointPath[256] = {};
     char seededCheckpointPath[256] = {};
 
+    bool pathsFit = true;
+
     if ( projection == ProbeMap::Cube )
     {
-        std::snprintf( checkpointPath, sizeof( checkpointPath ), FF_ARTIFACT_DIRECTORY "/FilterFitter_%s_%s.fit", pProfileName, curveSlug );
-        std::snprintf( seededCheckpointPath, sizeof( seededCheckpointPath ), FF_ARTIFACT_DIRECTORY "/FilterFitter_%s_%s_seeded.fit", pProfileName, curveSlug );
+        pathsFit = FormatArtifactPath( checkpointPath, sizeof( checkpointPath ), FF_ARTIFACT_DIRECTORY "/FilterFitter_%s_%s.fit", pProfileName, curveSlug );
+        pathsFit = FormatArtifactPath( seededCheckpointPath, sizeof( seededCheckpointPath ), FF_ARTIFACT_DIRECTORY "/FilterFitter_%s_%s_seeded.fit", pProfileName, curveSlug ) && pathsFit;
     }
     else
     {
-        std::snprintf( checkpointPath, sizeof( checkpointPath ), FF_ARTIFACT_DIRECTORY "/FilterFitter_%s_%s_%s.fit", pProfileName, curveSlug, GetProbeMapName( projection ) );
-        std::snprintf( seededCheckpointPath, sizeof( seededCheckpointPath ), FF_ARTIFACT_DIRECTORY "/FilterFitter_%s_%s_%s_seeded.fit", pProfileName, curveSlug, GetProbeMapName( projection ) );
+        pathsFit = FormatArtifactPath( checkpointPath, sizeof( checkpointPath ), FF_ARTIFACT_DIRECTORY "/FilterFitter_%s_%s_%s.fit", pProfileName, curveSlug, GetProbeMapName( projection ) );
+        pathsFit = FormatArtifactPath( seededCheckpointPath, sizeof( seededCheckpointPath ), FF_ARTIFACT_DIRECTORY "/FilterFitter_%s_%s_%s_seeded.fit", pProfileName, curveSlug, GetProbeMapName( projection ) ) && pathsFit;
     }
 
     // Output names follow the same scheme, so a generated header or binary says which profile, curve and PROJECTION it is for without anyone having to remember.
@@ -5138,8 +5194,14 @@ int main( int argc, char** argv )
     char derivedHeaderPath[256] = {};
     char derivedBinaryPath[256] = {};
 
-    std::snprintf( derivedHeaderPath, sizeof( derivedHeaderPath ), FF_ARTIFACT_DIRECTORY "/ReflectionProbeTable_%s_%s_%s.h", pProfileName, curveSlug, GetProbeMapName( projection ) );
-    std::snprintf( derivedBinaryPath, sizeof( derivedBinaryPath ), FF_ARTIFACT_DIRECTORY "/ReflectionProbeTable_%s_%s_%s.bin", pProfileName, curveSlug, GetProbeMapName( projection ) );
+    pathsFit = FormatArtifactPath( derivedHeaderPath, sizeof( derivedHeaderPath ), FF_ARTIFACT_DIRECTORY "/ReflectionProbeTable_%s_%s_%s.h", pProfileName, curveSlug, GetProbeMapName( projection ) ) && pathsFit;
+    pathsFit = FormatArtifactPath( derivedBinaryPath, sizeof( derivedBinaryPath ), FF_ARTIFACT_DIRECTORY "/ReflectionProbeTable_%s_%s_%s.bin", pProfileName, curveSlug, GetProbeMapName( projection ) ) && pathsFit;
+
+    if ( !pathsFit )
+    {
+        std::printf( "the artifact directory is too long for a derived name: %s\n", FF_ARTIFACT_DIRECTORY );
+        return 1;
+    }
 
     char const* const headerOutputPath = ( pWriteHeaderPath != nullptr ) ? pWriteHeaderPath : derivedHeaderPath;
     char const* const binaryOutputPath = ( pWriteBinaryPath != nullptr ) ? pWriteBinaryPath : derivedBinaryPath;

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <numbers>
 
 namespace FilterFitter
 {
@@ -213,7 +214,7 @@ namespace FilterFitter
 
                 // The NDF at the half-vector, in the form the engine's own distribution is written in, with the roughness squared into the alpha the NDF takes.
                 double const denominator = ( ( dotNH * dotNH ) * ( alphaSquared - 1.0 ) ) + 1.0;
-                double const distribution = alphaSquared / ( DFGIntegrand::Pi * denominator * denominator );
+                double const distribution = alphaSquared / ( std::numbers::pi_v<double> * denominator * denominator );
 
                 double const g1L = DFGIntegrand::GeometrySchlick( dotNL, k );
 
@@ -302,11 +303,13 @@ namespace FilterFitter
         std::printf( "\n" );
         std::printf( "deterministic quadrature\n" );
         std::printf( "  the BRDF written longhand over the hemisphere, at %u x %u cells, against two\n", DFGQuadratureThetaCells, DFGQuadraturePhiCells );
-        std::printf( "  rows of the table. A texel counts only where quadrupling the table's own\n" );
-        std::printf( "  sample count moves its estimate by less than %.0e, which is where a sample\n", DFGQuadratureConvergenceTolerance );
-        std::printf( "  count can still say what the integral is.\n" );
+        std::printf( "  rows of the table. It samples no half-vector and divides by no ( N.H ), so it\n" );
+        std::printf( "  checks the estimator's algebra rather than its conventions, which it calls.\n" );
+        std::printf( "  A texel counts only where quadrupling the table's own sample count moves its\n" );
+        std::printf( "  estimate by less than %.0e, which is where a sample count can still say what\n", DFGQuadratureConvergenceTolerance );
+        std::printf( "  the integral is.\n" );
         std::printf( "\n" );
-        std::printf( "  %-10s %-11s %-13s %-13s %-13s %-13s\n", "roughness", "converged", "max |d s|", "max |d b|", "table s", "quad s" );
+        std::printf( "  %-10s %-11s %-13s %-13s %-13s %-13s %-13s %-13s\n", "roughness", "converged", "max |d s|", "max |d b|", "table s", "quad s", "table b", "quad b" );
 
         for ( uint32_t const row : DFGQuadratureRows )
         {
@@ -317,16 +320,21 @@ namespace FilterFitter
             double worstBias = 0.0;
             double tableScale = 0.0;
             double quadratureScale = 0.0;
+            double tableBias = 0.0;
+            double quadratureBias = 0.0;
 
             for ( uint32_t column = 0; column < resolution; ++column )
             {
                 double const ndotV = table.GetNdotV( column );
 
-                DFGTexel const fine = EvaluateDFGTexel( ndotV, roughness, sampleCount, DFGSampleSequence::Hammersley );
-                DFGTexel const coarser = EvaluateDFGTexel( ndotV, roughness, sampleCount * 4u, DFGSampleSequence::Hammersley );
+                // The table's own count, and the same estimator at four times it, which
+                // is the one that decides whether that count can still say what the
+                // integral is at this texel.
+                DFGTexel const tableEstimate = EvaluateDFGTexel( ndotV, roughness, sampleCount, DFGSampleSequence::Hammersley );
+                DFGTexel const quadrupled = EvaluateDFGTexel( ndotV, roughness, sampleCount * 4u, DFGSampleSequence::Hammersley );
 
-                if ( ( std::fabs( fine.m_scale - coarser.m_scale ) > DFGQuadratureConvergenceTolerance )
-                  || ( std::fabs( fine.m_bias - coarser.m_bias ) > DFGQuadratureConvergenceTolerance ) )
+                if ( ( std::fabs( tableEstimate.m_scale - quadrupled.m_scale ) > DFGQuadratureConvergenceTolerance )
+                  || ( std::fabs( tableEstimate.m_bias - quadrupled.m_bias ) > DFGQuadratureConvergenceTolerance ) )
                 {
                     continue;
                 }
@@ -335,22 +343,27 @@ namespace FilterFitter
 
                 DFGTexel const quadrature = EvaluateDFGTexelQuadrature( ndotV, roughness, DFGQuadratureThetaCells, DFGQuadraturePhiCells );
 
-                double const scaleDelta = std::fabs( fine.m_scale - quadrature.m_scale );
-                double const biasDelta = std::fabs( fine.m_bias - quadrature.m_bias );
+                double const scaleDelta = std::fabs( tableEstimate.m_scale - quadrature.m_scale );
+                double const biasDelta = std::fabs( tableEstimate.m_bias - quadrature.m_bias );
 
                 if ( scaleDelta > worstScale )
                 {
                     worstScale = scaleDelta;
-                    tableScale = fine.m_scale;
+                    tableScale = tableEstimate.m_scale;
                     quadratureScale = quadrature.m_scale;
                 }
 
-                worstBias = ( biasDelta > worstBias ) ? biasDelta : worstBias;
+                if ( biasDelta > worstBias )
+                {
+                    worstBias = biasDelta;
+                    tableBias = tableEstimate.m_bias;
+                    quadratureBias = quadrature.m_bias;
+                }
             }
 
             if ( converged == 0 )
             {
-                std::printf( "  %-10.4f %-11s %-13s %-13s %-13s %-13s\n", roughness, "none", "-", "-", "-", "-" );
+                std::printf( "  %-10.4f %-11s %-13s %-13s %-13s %-13s %-13s %-13s\n", roughness, "none", "-", "-", "-", "-", "-", "-" );
 
                 continue;
             }
@@ -363,13 +376,13 @@ namespace FilterFitter
 
             std::printf
             (
-                "  %-10.4f %-11u %-13.4e %-13.4e %-13.6f %-13.6f\n",
-                roughness, converged, worstScale, worstBias, tableScale, quadratureScale
+                "  %-10.4f %-11u %-13.4e %-13.4e %-13.6f %-13.6f %-13.6f %-13.6f\n",
+                roughness, converged, worstScale, worstBias, tableScale, quadratureScale, tableBias, quadratureBias
             );
 
             if ( !rowPassed )
             {
-                std::printf( "    above %.0e against an estimator-independent quadrature\n", DFGQuadratureTolerance );
+                std::printf( "    above %.0e against a quadrature that shares the conventions and nothing else\n", DFGQuadratureTolerance );
             }
         }
 
@@ -388,12 +401,13 @@ namespace FilterFitter
     {
         uint32_t const resolution = table.GetResolution();
 
-        // Half has ten mantissa bits, so a normal value is stored to within one part in 1024.
+        // Half has ten mantissa bits, so a normal value is stored to within one part in 1024 at worst, which is half an ulp of the binade it sits in.
+        // The allowance below is twice that, so a value that fails it was encoded wrongly rather than merely rounded, which is what this check is for.
         // Below the smallest normal half the spacing stops shrinking, so the allowance there becomes an absolute one denormal step: a relative tolerance alone would fail on a value the format simply cannot resolve more finely, which is not the same thing as being stored wrongly.
         double const relativeTolerance = 1.05e-3;
         double const denormalStep = 5.9604645e-8;
 
-        // What each stored value is allowed to be off by, as a fraction of that. One is the format's own rounding and nothing beyond it.
+        // What each stored value is off by, as a fraction of what the format allows it.
         double worstScaleAllowance = 0.0;
         double worstBiasAllowance = 0.0;
         double largestScale = 0.0;
@@ -549,8 +563,8 @@ namespace FilterFitter
 
         passed = CheckDFGQuadratureRows( table, sampleCount, anyQuadratureRow ) && passed;
 
-        // The reference's own error, measured rather than assumed: the same grid at a quarter of the samples.
-        // No deviation above can be smaller than this, and where this is the larger of the two the comparison measured the reference.
+        // The reference's own movement, measured rather than assumed: the same estimator at a quarter of the samples.
+        // It is a proxy and not a bound - both counts come from one construction, so a fault in that construction is invisible here - and where this is the larger of the two, the comparison above was measuring the reference.
         std::printf( "\n" );
         std::printf( "  evaluating the reference's own convergence...\n" );
         std::fflush( stdout );
@@ -560,7 +574,7 @@ namespace FilterFitter
 
         DFGComparison convergence;
         CompareDFGTables( reference, coarseReference, convergence );
-        PrintDFGBandTable( "the reference against itself", "the same estimator at a quarter of the samples, which bounds every number above", reference, convergence, coarseReferenceSamples );
+        PrintDFGBandTable( "the reference against itself", "the same estimator at a quarter of the samples: a proxy for its own movement, not a bound on it", reference, convergence, coarseReferenceSamples );
 
         passed = CheckDFGEncoding( table ) && passed;
 
