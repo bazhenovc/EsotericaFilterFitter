@@ -51,7 +51,7 @@ namespace FilterFitter
     // Exposing it separately would permit a prefilter without the cosine to be paired with a DFG built for the cosine convention.
     //
     // It is a constructor argument so the conformance test can compare the variants. 
-    // That test selects the cosine form, which is also what the engine's RadianceFiltering.esf computes.
+    // That test selects the cosine form, which is also what the engine's radiance prefilter and its DFG table compute.
     //-------------------------------------------------------------------------
 
     enum class LobeConvention : uint8_t

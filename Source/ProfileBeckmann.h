@@ -101,6 +101,31 @@ namespace FilterFitter
             return ApplyLobeConvention( m_convention, cosEnv, NDF );
         }
 
+        //  Sampling the half-vector from the NDF
+        //---------------------------------------------------------------------
+        // The inverse of this profile's own distribution of ( H.N ).
+        // It is not GGX's inverse and the two are not interchangeable; see the note on ProfileGGX's.
+        //
+        // In the surface frame, with phi measured from the x axis.
+        //---------------------------------------------------------------------
+
+        static void SampleHalfVector( double xiX, double xiY, double alphaSquared, double* pHalf )
+        {
+            double const phi = ( 2.0 * std::numbers::pi_v<double> ) * xiX;
+
+            // The smallest positive xi keeps the logarithm finite, and the largest keeps
+            // the sample off an exactly grazing cosine, where this NDF is zero anyway.
+            double const xi = ( xiY < 1.0e-12 ) ? 1.0e-12 : ( ( xiY > ( 1.0 - 1.0e-12 ) ) ? ( 1.0 - 1.0e-12 ) : xiY );
+            double const denominator = 1.0 - ( alphaSquared * std::log( xi ) );
+
+            double const cosTheta = std::sqrt( 1.0 / denominator );
+            double const sinTheta = std::sqrt( ( 1.0 - cosTheta ) * ( 1.0 + cosTheta ) );
+
+            pHalf[0] = std::cos( phi ) * sinTheta;
+            pHalf[1] = std::sin( phi ) * sinTheta;
+            pHalf[2] = cosTheta;
+        }
+
         inline LobeConvention GetConvention() const { return m_convention; }
         inline double GetAlphaScale() const { return m_alphaScale; }
         inline LevelWidthCurve const& GetCurve() const { return m_curve; }

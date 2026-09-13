@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "ArtifactDirectory.h"
 #include "BsplineRecurrence.h"
 #include "CoefficientTable.h"
 #include "HDRIDataset.h"
@@ -33,7 +34,7 @@ namespace FilterFitter
     struct HDRIRunSettings
     {
         std::string         m_datasetRoot;
-        std::string         m_outputRoot = "External/FilterFitter/hdri";
+        std::string         m_outputRoot = FF_ARTIFACT_DIRECTORY "/hdri";
 
         HDRIIngestSettings  m_ingest;
 
@@ -52,7 +53,7 @@ namespace FilterFitter
         //
         // 8192 rather than the engine's 1024: the reference's job is to be the converged answer, not to reproduce a realtime budget. 
         // Measured on DayEnvironmentHDRI001, going from 1024 to 8192 moves every table's level-6 error by 6-20%, and going from 8192 to 131072 - sixteen times the samples - moves nothing beyond the fourth decimal.
-        // 1024 stays reachable and reproduces RadianceFiltering.esf's own number.
+        // 1024 stays reachable and reproduces the engine's own realtime estimator.
         uint32_t            m_samples = 8192;
 
         // Pass-1 weighting used to read the source chain, and by the taps.

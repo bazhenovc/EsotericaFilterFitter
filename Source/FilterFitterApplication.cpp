@@ -1,5 +1,9 @@
+#include "ArtifactDirectory.h"
 #include "BsplineRecurrence.h"
 #include "CubeReferenceFrame.h"
+#include "DFGOutput.h"
+#include "DFGTable.h"
+#include "DFGValidation.h"
 #include "FitDriver.h"
 #include "HDRIShowcase.h"
 #include "HDRIValidation.h"
@@ -2125,8 +2129,8 @@ static bool RunShowcaseWriterCheck()
     ShowcaseImage image;
     ComposeShowcaseImage< TetrahedralProjection >( showcase, image );
 
-    // The tool always runs from the repository root, and this is removed again
-    std::string const path = "FilterFitter_showcase_check.exr";
+    // Written where the other artifacts go, and removed again
+    std::string const path = FF_ARTIFACT_DIRECTORY "/FilterFitter_showcase_check.exr";
 
     std::string message;
     bool const saved = image.Save( path, message );
@@ -3933,6 +3937,9 @@ static bool WriteFittedTable
 
             std::printf( "\n" );
             std::printf( "\n  embed it with:\n" );
+            std::printf( "    External\\FilterFitter\\EmbedTables.bat\n" );
+            std::printf( "  which runs the DataEmbed tool over this binary and the DFG table together, or\n" );
+            std::printf( "  directly:\n" );
             std::printf( "    External\\DataEmbed\\DataEmbed.exe %s <Symbol> <OutputName>\n", pBinaryPath );
         }
     }
@@ -4292,7 +4299,7 @@ static void RunOptimizerBenchmark()
 
 static void PrintUsage()
 {
-    std::printf( "\nusage: EsotericaFilterFitter [--diagnostics] [--benchmark]\n" );
+    std::printf( "\nusage: EsotericaFilterFitter [--diagnostics] [--benchmark] [--dfg]\n" );
     std::printf( "\n" );
     std::printf( "  Runs the per-stage self-checks and the published-table conformance test.\n" );
     std::printf( "\n" );
@@ -4321,6 +4328,37 @@ static void PrintUsage()
     std::printf( "  --reset         Discard the checkpoint before fitting, so --fit starts from\n" );
     std::printf( "                  level 0 again. Without this a fit always resumes.\n" );
     std::printf( "\n" );
+    std::printf( "  DFG TABLE\n" );
+    std::printf( "  A mode of its own: it evaluates the preintegrated split-sum DFG term, scale\n" );
+    std::printf( "  and bias, over the grid the engine's environment lookup samples it by, and\n" );
+    std::printf( "  writes it as the texture the engine creates at startup. It runs none of the\n" );
+    std::printf( "  checks above, because the term does not depend on a map, a tap layout, a fit,\n" );
+    std::printf( "  a profile or a curve: the integral is the engine's own, fixed in DFGIntegrand.h,\n" );
+    std::printf( "  and --profile, --curve and --widths do not apply to it.\n" );
+    std::printf( "\n" );
+    std::printf( "  --dfg           Evaluate the table, measure it against a reference at a higher\n" );
+    std::printf( "                  sample count and against a deterministic quadrature of the\n" );
+    std::printf( "                  hemisphere, and write the binary and the C header. Prints PASS\n" );
+    std::printf( "                  or FAIL and exits nonzero on FAIL.\n" );
+    std::printf( "  --dfg-resolution <n>\n" );
+    std::printf( "                  Texels per axis, both axes spanning zero to one and a texel's\n" );
+    std::printf( "                  coordinates being its centre. Default %u, which is what the\n", DFGDefaultResolution );
+    std::printf( "                  engine's lookup texture is.\n" );
+    std::printf( "  --dfg-samples <n>\n" );
+    std::printf( "                  Samples per texel in the table's own evaluation. Default %u,\n", DFGDefaultSampleCount );
+    std::printf( "                  which is offline accuracy rather than a frame budget.\n" );
+    std::printf( "  --dfg-reference-samples <n>\n" );
+    std::printf( "                  Samples per texel in the reference the table is measured against.\n" );
+    std::printf( "                  Default %u, several times the table's, because the deviation\n", DFGDefaultReferenceSampleCount );
+    std::printf( "                  between them cannot be smaller than the reference's own error.\n" );
+    std::printf( "                  Raised automatically to twice the table's if set below it.\n" );
+    std::printf( "  --dfg-binary <path>\n" );
+    std::printf( "                  Where the binary goes. Default DFGTable_esoterica.bin in the\n" );
+    std::printf( "                  FilterFitter folder.\n" );
+    std::printf( "  --dfg-header <path>\n" );
+    std::printf( "                  Where the C header goes. Default DFGTable_esoterica.h.\n" );
+    std::printf( "                  An empty value skips it.\n" );
+    std::printf( "\n" );
     std::printf( "  HDRI RADIANCE VALIDATION\n" );
     std::printf( "  A corpus mode of its own: it measures the tables against a reference\n" );
     std::printf( "  convolution of real environments rather than against the preimage, and it\n" );
@@ -4335,7 +4373,7 @@ static void PrintUsage()
     std::printf( "                          ingested HDRI, compared per level. The reference is\n" );
     std::printf( "                          the expensive half and is cached per sample count.\n" );
     std::printf( "  --hdri-dir <path>       Where the projected maps live. Default\n" );
-    std::printf( "                          External/FilterFitter/hdri.\n" );
+    std::printf( "                          hdri/ in the FilterFitter folder.\n" );
     std::printf( "  --hdri-limit <n>        Stop after n assets, for a first look. Stable order,\n" );
     std::printf( "                          so the same n is the same assets every run.\n" );
     std::printf( "  --hdri-samples <n>      Reference samples per output texel. Default 8192,\n" );
@@ -4390,7 +4428,7 @@ static void PrintUsage()
     std::printf( "                  Write the fitted table as a C header, shaped like the vendored\n" );
     std::printf( "                  reference tables. Needs a complete checkpoint, so run --fit\n" );
     std::printf( "                  first. With no path the name is derived from the profile and\n" );
-    std::printf( "                  curve. Seconds.\n" );
+    std::printf( "                  curve, in the FilterFitter folder. Seconds.\n" );
     std::printf( "\n" );
     std::printf( "  --write-binary [path]\n" );
     std::printf( "                  Write the same table as a raw binary for the engine's DataEmbed\n" );
@@ -4399,7 +4437,8 @@ static void PrintUsage()
     std::printf( "                  With no path the name is derived, as above. Seconds.\n" );
     std::printf( "\n" );
     std::printf( "  Checkpoints and derived output names carry the profile, the curve and the\n" );
-    std::printf( "  map they are for:\n" );
+    std::printf( "  map they are for, and are written in the FilterFitter folder rather than in\n" );
+    std::printf( "  the working directory, so a fit started from anywhere lands in one place:\n" );
     std::printf( "\n" );
     std::printf( "      FilterFitter_<profile>_<curve>.fit                  checkpoint, cubemap\n" );
     std::printf( "      FilterFitter_<profile>_<curve>_<projection>.fit     checkpoint, every other map\n" );
@@ -4614,6 +4653,15 @@ int main( int argc, char** argv )
     bool runSampleSize = false;
     bool runReset = false;
 
+    // Preintegrated split-sum DFG term.
+    // A mode of its own rather than another check: it evaluates a table the fit knows nothing about, and it writes it.
+    bool        runDFG = false;
+    uint32_t    dfgResolution = DFGDefaultResolution;
+    uint32_t    dfgSampleCount = DFGDefaultSampleCount;
+    uint32_t    dfgReferenceSampleCount = DFGDefaultReferenceSampleCount;
+    char const* pDFGBinaryPath = nullptr;
+    char const* pDFGHeaderPath = nullptr;
+
     // HDRI radiance validation. 
     // These are a mode of their own rather than another check, because they run against a dataset rather than against the tables' own reference, and because a corpus run is hours long.
     //
@@ -4703,6 +4751,78 @@ int main( int argc, char** argv )
         else if ( std::strcmp( pArgument, "--reset" ) == 0 )
         {
             runReset = true;
+        }
+        else if ( std::strcmp( pArgument, "--dfg" ) == 0 )
+        {
+            runDFG = true;
+        }
+        else if ( std::strcmp( pArgument, "--dfg-resolution" ) == 0 )
+        {
+            if ( ( argumentIndex + 1 ) >= argc )
+            {
+                std::printf( "--dfg-resolution needs a texel count\n" );
+                return 1;
+            }
+
+            dfgResolution = static_cast<uint32_t>( std::strtoul( argv[++argumentIndex], nullptr, 10 ) );
+
+            if ( dfgResolution == 0 )
+            {
+                std::printf( "--dfg-resolution needs a count above zero\n" );
+                return 1;
+            }
+        }
+        else if ( std::strcmp( pArgument, "--dfg-samples" ) == 0 )
+        {
+            if ( ( argumentIndex + 1 ) >= argc )
+            {
+                std::printf( "--dfg-samples needs a sample count\n" );
+                return 1;
+            }
+
+            dfgSampleCount = static_cast<uint32_t>( std::strtoul( argv[++argumentIndex], nullptr, 10 ) );
+
+            if ( dfgSampleCount == 0 )
+            {
+                std::printf( "--dfg-samples needs a count above zero\n" );
+                return 1;
+            }
+        }
+        else if ( std::strcmp( pArgument, "--dfg-reference-samples" ) == 0 )
+        {
+            if ( ( argumentIndex + 1 ) >= argc )
+            {
+                std::printf( "--dfg-reference-samples needs a sample count\n" );
+                return 1;
+            }
+
+            dfgReferenceSampleCount = static_cast<uint32_t>( std::strtoul( argv[++argumentIndex], nullptr, 10 ) );
+
+            if ( dfgReferenceSampleCount == 0 )
+            {
+                std::printf( "--dfg-reference-samples needs a count above zero\n" );
+                return 1;
+            }
+        }
+        else if ( std::strcmp( pArgument, "--dfg-binary" ) == 0 )
+        {
+            if ( ( argumentIndex + 1 ) >= argc )
+            {
+                std::printf( "--dfg-binary needs a path\n" );
+                return 1;
+            }
+
+            pDFGBinaryPath = argv[++argumentIndex];
+        }
+        else if ( std::strcmp( pArgument, "--dfg-header" ) == 0 )
+        {
+            if ( ( argumentIndex + 1 ) >= argc )
+            {
+                std::printf( "--dfg-header needs a path\n" );
+                return 1;
+            }
+
+            pDFGHeaderPath = argv[++argumentIndex];
         }
         else if ( ( std::strcmp( pArgument, "--hdri-scan" ) == 0 )
               || ( std::strcmp( pArgument, "--hdri-ingest" ) == 0 )
@@ -4884,6 +5004,37 @@ int main( int argc, char** argv )
         }
     }
 
+    // The DFG term is the engine's own integral and nothing else: no map, no tap layout, no fit, no profile and no curve are involved.
+    // So it has a mode of its own, and it runs before the flags that describe a radiance table are validated, because none of them apply to it.
+    if ( runDFG )
+    {
+        char derivedDFGBinaryPath[256] = {};
+        char derivedDFGHeaderPath[256] = {};
+
+        std::snprintf( derivedDFGBinaryPath, sizeof( derivedDFGBinaryPath ), FF_ARTIFACT_DIRECTORY "/DFGTable_%s.bin", DFGTableName );
+        std::snprintf( derivedDFGHeaderPath, sizeof( derivedDFGHeaderPath ), FF_ARTIFACT_DIRECTORY "/DFGTable_%s.h", DFGTableName );
+
+        char const* const dfgBinaryOutputPath = ( pDFGBinaryPath != nullptr ) ? pDFGBinaryPath : derivedDFGBinaryPath;
+
+        // An empty path is how the header is skipped, which is a different request from not naming one: not naming one derives the name.
+        char const* dfgHeaderOutputPath = derivedDFGHeaderPath;
+
+        if ( pDFGHeaderPath != nullptr )
+        {
+            dfgHeaderOutputPath = ( pDFGHeaderPath[0] != '\0' ) ? pDFGHeaderPath : nullptr;
+        }
+
+        std::printf( "Esoterica FilterFitter\n" );
+        std::printf( "offline preintegrated split-sum DFG table generator\n" );
+
+        int const result = RunDFGValidation( dfgBinaryOutputPath, dfgHeaderOutputPath, dfgResolution, dfgSampleCount, dfgReferenceSampleCount );
+
+        // The bytes written here are the bytes the engine uploads, so the encoder's own round trip is checked before the run is called a success.
+        bool const writerOk = RunDFGWriterSelfCheck();
+
+        return ( ( result == 0 ) && writerOk ) ? 0 : 1;
+    }
+
     // Arguments are validated before any work runs.
     // The self-checks below take a few seconds and the fits take hours, so refusing a bad --profile at the end would mean doing all of it before saying no.
     bool const isBeckmann = ( std::strcmp( pProfileName, "beckmann" ) == 0 );
@@ -4967,28 +5118,28 @@ int main( int argc, char** argv )
     //
     // The cubemap name carries no projection because a completed cubemap fit predates the flag, and a fit is minutes to hours: renaming it would orphan the one checkpoint on disk that this build can still read.
     // Every other map appends its projection, which is also what keeps a tetrahedral fit from being written over the cubemap one.
-    char checkpointPath[160] = {};
-    char seededCheckpointPath[160] = {};
+    char checkpointPath[256] = {};
+    char seededCheckpointPath[256] = {};
 
     if ( projection == ProbeMap::Cube )
     {
-        std::snprintf( checkpointPath, sizeof( checkpointPath ), "FilterFitter_%s_%s.fit", pProfileName, curveSlug );
-        std::snprintf( seededCheckpointPath, sizeof( seededCheckpointPath ), "FilterFitter_%s_%s_seeded.fit", pProfileName, curveSlug );
+        std::snprintf( checkpointPath, sizeof( checkpointPath ), FF_ARTIFACT_DIRECTORY "/FilterFitter_%s_%s.fit", pProfileName, curveSlug );
+        std::snprintf( seededCheckpointPath, sizeof( seededCheckpointPath ), FF_ARTIFACT_DIRECTORY "/FilterFitter_%s_%s_seeded.fit", pProfileName, curveSlug );
     }
     else
     {
-        std::snprintf( checkpointPath, sizeof( checkpointPath ), "FilterFitter_%s_%s_%s.fit", pProfileName, curveSlug, GetProbeMapName( projection ) );
-        std::snprintf( seededCheckpointPath, sizeof( seededCheckpointPath ), "FilterFitter_%s_%s_%s_seeded.fit", pProfileName, curveSlug, GetProbeMapName( projection ) );
+        std::snprintf( checkpointPath, sizeof( checkpointPath ), FF_ARTIFACT_DIRECTORY "/FilterFitter_%s_%s_%s.fit", pProfileName, curveSlug, GetProbeMapName( projection ) );
+        std::snprintf( seededCheckpointPath, sizeof( seededCheckpointPath ), FF_ARTIFACT_DIRECTORY "/FilterFitter_%s_%s_%s_seeded.fit", pProfileName, curveSlug, GetProbeMapName( projection ) );
     }
 
     // Output names follow the same scheme, so a generated header or binary says which profile, curve and PROJECTION it is for without anyone having to remember.
     // The projection is in the name because a table is for exactly one map: a build script that picked up a cubemap table for a tetrahedral probe would otherwise have to be told, by a file that reads as if it were the right one.
     // An explicit path still wins, because a caller embedding this in a build system needs to choose.
-    char derivedHeaderPath[192] = {};
-    char derivedBinaryPath[192] = {};
+    char derivedHeaderPath[256] = {};
+    char derivedBinaryPath[256] = {};
 
-    std::snprintf( derivedHeaderPath, sizeof( derivedHeaderPath ), "ReflectionProbeTable_%s_%s_%s.h", pProfileName, curveSlug, GetProbeMapName( projection ) );
-    std::snprintf( derivedBinaryPath, sizeof( derivedBinaryPath ), "ReflectionProbeTable_%s_%s_%s.bin", pProfileName, curveSlug, GetProbeMapName( projection ) );
+    std::snprintf( derivedHeaderPath, sizeof( derivedHeaderPath ), FF_ARTIFACT_DIRECTORY "/ReflectionProbeTable_%s_%s_%s.h", pProfileName, curveSlug, GetProbeMapName( projection ) );
+    std::snprintf( derivedBinaryPath, sizeof( derivedBinaryPath ), FF_ARTIFACT_DIRECTORY "/ReflectionProbeTable_%s_%s_%s.bin", pProfileName, curveSlug, GetProbeMapName( projection ) );
 
     char const* const headerOutputPath = ( pWriteHeaderPath != nullptr ) ? pWriteHeaderPath : derivedHeaderPath;
     char const* const binaryOutputPath = ( pWriteBinaryPath != nullptr ) ? pWriteBinaryPath : derivedBinaryPath;
@@ -5021,6 +5172,8 @@ int main( int argc, char** argv )
     passed = RunTapLayoutSelfCheck< TetrahedralProjection >() && passed;
 
     passed = RunTableWriterSelfCheck() && passed;
+
+    passed = RunDFGWriterSelfCheck() && passed;
 
     passed = RunShowcaseSelfCheck() && passed;
 

@@ -321,7 +321,7 @@ EsotericaFilterFitter.exe --fit --curve esoterica
 EsotericaFilterFitter.exe --write-header --write-binary --curve esoterica
 ```
 
-The fit is resumable: it checkpoints after every level. `--reset` starts it over from level 0. Outputs:
+The fit is resumable: it checkpoints after every level. `--reset` starts it over from level 0. Outputs, written in `External\FilterFitter\` whichever directory the tool was run from:
 
 ```
 ReflectionProbeTable_ggx_esoterica_cube.h
@@ -354,7 +354,7 @@ Ingest decodes each panorama into the selected base map and caches it. The two m
 
 Validate convolves every environment twice, once by brute force and once from the table, and reports the difference. Both stages cache their results, so re-running them is fast. A cubemap run validates the four published tables beside the fitted one; a tetrahedral run validates the fitted table and nothing else, because the published tables are cubemap data.
 
-Results are written as EXR, one file per slice per level, under `.hdri/<environment>/<stage>/`.
+Results are written as EXR, one file per slice per level, under `External\FilterFitter\hdri\<environment>\<stage>\`.
 
 ### Reading a table at run time
 

@@ -16,7 +16,7 @@
 //
 //  REFERENCE
 //
-// The engine's RadianceFiltering.esf, moved to the CPU and run at a high sample count.
+// The engine's radiance prefilter, moved to the CPU and run at a high sample count.
 // It importance-samples the half-vector from the profile's NDF, reflects, weights by cos(theta_l), and samples the source chain at the mip whose texel solid angle matches the sample's own. 
 // That term is not decoration: at a narrow width the lobe covers a fraction of a texel, and without it the estimator aliases the source instead of averaging it.
 //

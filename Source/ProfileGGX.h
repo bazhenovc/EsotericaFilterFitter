@@ -89,6 +89,34 @@ namespace FilterFitter
             return ApplyLobeConvention( m_convention, cosEnv, NDF );
         }
 
+        //  Sampling the half-vector from the NDF
+        //---------------------------------------------------------------------
+        // The inverse of this profile's own distribution of ( H.N ), for an estimator that has to average against the NDF rather than sample the hemisphere uniformly.
+        // It belongs here rather than beside the caller because it is a property of the distribution: another NDF's inverse used with this NDF's weight is a wrong answer that still averages to something plausible.
+        //
+        // In the surface frame, with phi measured from the x axis.
+
+        static void SampleHalfVector( double xiX, double xiY, double alphaSquared, double* pHalf )
+        {
+            double const phi = ( 2.0 * std::numbers::pi_v<double> ) * xiX;
+            double const denominator = 1.0 + ( ( alphaSquared - 1.0 ) * xiY );
+
+            double cosTheta = 0.0;
+
+            if ( denominator > 0.0 )
+            {
+                double const ratio = ( 1.0 - xiY ) / denominator;
+
+                cosTheta = ( ratio > 0.0 ) ? std::sqrt( ratio ) : 0.0;
+            }
+
+            double const sinTheta = std::sqrt( ( 1.0 - cosTheta ) * ( 1.0 + cosTheta ) );
+
+            pHalf[0] = std::cos( phi ) * sinTheta;
+            pHalf[1] = std::sin( phi ) * sinTheta;
+            pHalf[2] = cosTheta;
+        }
+
         inline LobeConvention GetConvention() const { return m_convention; }
         inline double GetAlphaScale() const { return m_alphaScale; }
         inline LevelWidthCurve const& GetCurve() const { return m_curve; }

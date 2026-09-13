@@ -49,6 +49,10 @@ target_compile_definitions( EsotericaFilterFitter PRIVATE
     NOMINMAX
     WIN32_LEAN_AND_MEAN
     _CRT_SECURE_NO_WARNINGS
+    # Where a derived artifact name is written. The tool is standalone and cannot find
+    # its own sources at run time, so the folder it lives in is baked in here; see
+    # Source/ArtifactDirectory.h. Forward slashes, so the value needs no escaping.
+    FF_ARTIFACT_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}"
     # Matches the engine. The STL substitutes abort for throw, which is what the
     # engine's build does, so a failure here behaves the way it would there.
     _HAS_EXCEPTIONS=0

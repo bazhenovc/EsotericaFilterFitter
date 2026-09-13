@@ -190,7 +190,14 @@ void AccumulateFrame( uint level,
             float const tapLevel  = TapParameter( level, PARAM_LEVEL, index, subTap, theta2, phi2 ) + levelCorrection;
             float const tapWeight = TapParameter( level, PARAM_WEIGHT, index, subTap, theta2, phi2 ) * frameWeight;
 
-            accumulated += tapWeight * g_source.SampleLevel( g_sourceSampler, tapDirection, tapLevel ).rgb;
+            // The tap is stored in the basis of this frame, so it is rotated into
+            // world space before the cube is read. The basis is the one built above
+            // from the frame's axis and the output direction. At the mirror level
+            // the stored float3( 0.0, 0.0, 1.0 ) lands on frameZ, which is the
+            // output direction, and that is what a mirror tap has to read.
+            float3 const worldDirection = ( tapDirection.x * frameX ) + ( tapDirection.y * frameY ) + ( tapDirection.z * frameZ );
+
+            accumulated += tapWeight * g_source.SampleLevel( g_sourceSampler, worldDirection, tapLevel ).rgb;
             weightSum   += tapWeight;
         }
     }

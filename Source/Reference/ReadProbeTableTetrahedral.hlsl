@@ -324,20 +324,27 @@ void AccumulateFrame( uint level,
 
             float3 const unit = normalize( tapDirection / major );
 
+            // The tap is stored in the basis of this frame, so it is rotated into
+            // world space before the lookups below, which are all world space: the
+            // face a tap lands on, how squarely it faces it, and the tile coordinate
+            // it reads. At the face-centre tap the stored float3( 0.0, 0.0, 1.0 )
+            // lands on frameZ, which is the output direction.
+            float3 const worldDirection = ( unit.x * frameX ) + ( unit.y * frameY ) + ( unit.z * frameZ );
+
             // How squarely the tap faces the face it landed on: 1 at a face centre
             // and 1/3 at a corner. It drives the level correction below, because a
             // tap near a corner reads a coarser mip - the texels there cover less
             // solid angle, so a coarser one matches the tap's own footprint.
-            uint const face = FaceFromDirection( unit );
+            uint const face = FaceFromDirection( worldDirection );
 
-            float const alignment = max( -dot( unit, FaceVertex( face ) ), 1.0e-6 );
+            float const alignment = max( -dot( worldDirection, FaceVertex( face ) ), 1.0e-6 );
 
             float const levelCorrection = -1.5 * log2( alignment );
 
             float const tapLevel  = TapParameter( level, PARAM_LEVEL, index, subTap, theta2, phi2 ) + levelCorrection;
             float const tapWeight = TapParameter( level, PARAM_WEIGHT, index, subTap, theta2, phi2 ) * frameWeight;
 
-            accumulated += tapWeight * g_source.SampleLevel( g_sourceSampler, TileCoordinate( unit ), tapLevel ).rgb;
+            accumulated += tapWeight * g_source.SampleLevel( g_sourceSampler, TileCoordinate( worldDirection ), tapLevel ).rgb;
             weightSum   += tapWeight;
         }
     }
