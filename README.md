@@ -1,5 +1,7 @@
 # FilterFitter
 
+![cube](cube.png)
+
 FilterFitter generates the small lookup tables that blur reflection probes.
 
 It implements the method from Manson and Sloan, "Fast Filtering of Reflection Probes", EGSR 2016, for the Esoterica Engine. The paper published four tables, and none of them apply here: this engine's roughness curve differs from the paper's, and a table only works for the curve it was fitted for. So the tool fits its own, for any lobe shape, any roughness curve and either base map.
