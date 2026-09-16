@@ -117,6 +117,13 @@ static constexpr uint32_t g_supersampleRate = 8;
 // Averaging the kernel over a texel is a better quadrature of the continuous kernel but a different function, and only agrees from level 3 outward.
 // The paper's level-0 table selects the point-sampled form.
 static constexpr uint32_t g_conformanceGridSize = 4;
+
+// The grid the FIT trains on, which is a different question from the grid conformance is scored on.
+//
+// Conformance asks whether this tool reproduces the paper's tables at the sample the paper's numbers were measured on, so its grid is fixed by that comparison.
+// The fit wants the densest training sample it can pay for, because a sample that is too coarse caps what the table can learn no matter what the optimizer does: the objective it descends is then an average over too few directions, and the table is free to be wrong between them.
+static constexpr uint32_t g_fitGridSize = 8;
+
 static constexpr uint32_t g_conformanceSupersampleRate = 1;
 
 static constexpr double g_pi = std::numbers::pi_v<double>;
@@ -3033,6 +3040,10 @@ static bool RunTableFitCheck
     // --reset discards the checkpoint first.
     FitSettings fitSettings;
     fitSettings.m_evaluation = settings;
+
+    // The fit trains at its own grid rather than the one conformance is scored on.
+    // Everything downstream of the fit - the checkpoint's fingerprint, the write-out and the HDRI validation's own scoring - keeps the grid it was given, so a table fitted here is still measured the way the published numbers were.
+    fitSettings.m_evaluation.m_gridSize = g_fitGridSize;
     fitSettings.m_shape = shape;
     fitSettings.m_pSeed = ( seedFromPublished && hasPublishedShape ) ? &seed : nullptr;
     fitSettings.m_pCheckpointPath = pCheckpointPath;
@@ -3178,7 +3189,7 @@ static bool RunTableFitCheck
 
     // A checkpoint from a different fit must be refused, not mixed in
     FitSettings mismatchSettings = fitSettings;
-    mismatchSettings.m_evaluation.m_gridSize = settings.m_gridSize + 4;
+    mismatchSettings.m_evaluation.m_gridSize = fitSettings.m_evaluation.m_gridSize + 4;
     mismatchSettings.m_verbose = false;
 
     FitResult const mismatchRun = RunTableFit( baseFrame, profile, mismatchSettings );
@@ -4355,7 +4366,7 @@ static void RunOptimizerBenchmark()
 
 static void PrintUsage()
 {
-    std::printf( "\nusage: EsotericaFilterFitter [--diagnostics] [--benchmark] [--dfg]\n" );
+    std::printf( "\nusage: FilterFitter [--diagnostics] [--benchmark] [--dfg]\n" );
     std::printf( "\n" );
     std::printf( "  Runs the per-stage self-checks and the published-table conformance test.\n" );
     std::printf( "\n" );
@@ -4665,26 +4676,38 @@ static bool RunSelectedChecks
             passed = RunWeightGradientCheck( frame, profile, settings ) && passed;
         }
 
+        // The fit probes answer questions about the FIT, so they run at the grid the fit trains at.
+        // At the harness grid they would report on a configuration nothing produces: whether a level is truncated, or its training sample is too coarse, is a question about the table that is actually fitted, and that table is fitted at g_fitGridSize.
+        //
+        // --sample-size reads its second arm as twice this one, so this is also what makes it the grid-against-twice-the-grid comparison it claims to be.
+        EvaluationSettings fitEvaluation = settings;
+        fitEvaluation.m_gridSize = g_fitGridSize;
+
         if ( selection.m_split )
         {
-            passed = RunSplitOptimizerComparison( frame, profile, settings ) && passed;
+            passed = RunSplitOptimizerComparison( frame, profile, fitEvaluation ) && passed;
         }
 
         if ( selection.m_converge )
         {
-            passed = RunConvergenceProbe( frame, profile, settings ) && passed;
+            passed = RunConvergenceProbe( frame, profile, fitEvaluation ) && passed;
         }
 
         if ( selection.m_sampleSize )
         {
-            passed = RunSampleSizeCheck( frame, profile, settings ) && passed;
+            passed = RunSampleSizeCheck( frame, profile, fitEvaluation ) && passed;
         }
     }
 
     if ( ( selection.m_pWriteHeaderPath != nullptr ) || ( selection.m_pWriteBinaryPath != nullptr ) )
     {
+        // The fit trains at its own grid, so the fingerprint it wrote carries that grid rather than the one this harness was called with.
+        // Building the expectation from the harness settings refuses the checkpoint the fit itself just wrote, which is what happened when the two grids first differed.
+        EvaluationSettings fitExpected = settings;
+        fitExpected.m_gridSize = g_fitGridSize;
+
         // The seed is deliberately left out, so a seeded fit can still be written out by a run that does not repeat the seeding flags.
-        FitFingerprint const expected = FitFingerprint::Make( settings, shape, profile, "" );
+        FitFingerprint const expected = FitFingerprint::Make( fitExpected, shape, profile, "" );
 
         passed = WriteFittedTable( selection.m_pCheckpointPath, selection.m_pWriteHeaderPath, selection.m_pWriteBinaryPath, expected ) && passed;
     }
@@ -4696,6 +4719,9 @@ static bool RunSelectedChecks
 
 int main( int argc, char** argv )
 {
+    // Unbuffered, because a run that dies part way through otherwise loses the lines that say where it died.
+    // stdout to a pipe is block buffered, so a failure takes the current block with it and leaves a tail that reads like the last successful check - which is exactly how a crash gets mistaken for a completed run.
+    std::setvbuf( stdout, nullptr, _IONBF, 0 );
     bool runDiagnostics = false;
     bool runBenchmark = false;
     bool runOptimizer = false;
@@ -5282,6 +5308,10 @@ int main( int argc, char** argv )
             hdriSettings.m_ingest.m_baseWidth = optimizerSettings.m_baseResolution;
             hdriSettings.m_curve = curve;
             hdriSettings.m_evaluation = optimizerSettings;
+
+            // The checkpoint being validated carries the grid the FIT trained at, and this is the settings object the validation loads it with, so it has to name that grid rather than the harness one.
+            // Nothing about how the validation scores changes: the published-table rows in the same report are the control for that, and they read the same either way.
+            hdriSettings.m_evaluation.m_gridSize = g_fitGridSize;
             hdriSettings.m_map = projection;
             hdriSettings.m_shape = fitShape;
             hdriSettings.pCheckpointPath = checkpointPath;

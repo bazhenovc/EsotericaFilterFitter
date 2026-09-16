@@ -347,12 +347,35 @@ namespace FilterFitter
 
             ProfileGGX const profile( curve, LobeConvention::NDFCosineHemisphere );
 
-            FitFingerprint const expected = FitFingerprint::Make( evaluation, shape, profile, "" );
-
             FitCheckpoint checkpoint;
 
+            FitFingerprint expected = FitFingerprint::Make( evaluation, shape, profile, "" );
+
             // Configuration rather than Exact: the seed decides how a table was reached, not what it means, and a validation run does not repeat the seeding flags.
-            if ( checkpoint.Load( pCheckpointPath, expected, FitCheckpoint::FingerprintCheck::Configuration ) != FitCheckpoint::LoadResult::Loaded )
+            FitCheckpoint::LoadResult const result = checkpoint.Load( pCheckpointPath, expected, FitCheckpoint::FingerprintCheck::Configuration );
+
+            // Everything the fingerprint holds about HOW a table was trained - base resolution, sample level count, training grid, supersample rate, reference smoothing, measure and weighting - describes the fit rather than the table, and a caller's copy of them is whatever the harness it is built against happens to use.
+            // Comparing them refuses stored tables over differences the table cannot see, and orphans every checkpoint written before one of them moved.
+            // So the fit's own values are taken from the checkpoint and only what the table MEANS - its shape, its profile and its curve - has to match; the fingerprint is supplied rather than loosened, so a table fitted for a different curve or shape still refuses.
+            if ( result == FitCheckpoint::LoadResult::Incompatible )
+            {
+                FitFingerprint relaxed = expected;
+
+                relaxed.m_baseResolution = checkpoint.m_fingerprint.m_baseResolution;
+                relaxed.m_sampleLevelCount = checkpoint.m_fingerprint.m_sampleLevelCount;
+                relaxed.m_gridSize = checkpoint.m_fingerprint.m_gridSize;
+                relaxed.m_supersampleRate = checkpoint.m_fingerprint.m_supersampleRate;
+                relaxed.m_referenceSmoothing = checkpoint.m_fingerprint.m_referenceSmoothing;
+                relaxed.m_measure = checkpoint.m_fingerprint.m_measure;
+                relaxed.m_weighting = checkpoint.m_fingerprint.m_weighting;
+
+                if ( checkpoint.Load( pCheckpointPath, relaxed, FitCheckpoint::FingerprintCheck::Configuration ) != FitCheckpoint::LoadResult::Loaded )
+                {
+                    message = checkpoint.m_message;
+                    return false;
+                }
+            }
+            else if ( result != FitCheckpoint::LoadResult::Loaded )
             {
                 message = checkpoint.m_message;
                 return false;

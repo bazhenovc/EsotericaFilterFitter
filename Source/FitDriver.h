@@ -116,7 +116,12 @@ namespace FilterFitter
 
         // Starts per level, taken from the best-scoring seed of each distinct outer-ring weight and kept by lowest fitted objective.
         // More than one because seed score does not predict fit quality: see the note in the level loop. Set to 1 to reproduce single-start behaviour.
-        uint32_t            m_numSeedStarts = 3;
+        // Seven is every candidate the seeding produces: one per outer-ring weight scale.
+        //
+        // Three was a cost choice, and the cost is the fit's rather than the frame's.
+        // It was also the wrong bet, because the candidates are ranked by their own objective value and that ranking does not predict where the optimizer lands: at several levels the second or the last-ranked seed reached the lowest minimum, so a budget of three hands the level to whichever three happened to be ranked first.
+        // A fit is minutes, a table is once, and the frame is unaffected.
+        uint32_t            m_numSeedStarts = 7;
 
         bool                m_verbose = true;
     };

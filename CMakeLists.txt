@@ -82,6 +82,12 @@ endif()
 # append the configuration itself and append it somewhere else.
 set_target_properties( EsotericaFilterFitter PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<IF:$<CONFIG:Debug>,Debug,Release>"
+
+    # The executable is NOT named after the project, and that is the point.
+    # The engine's projects run KillEsotericaProcesses.bat before every build, which is `taskkill /F /FI "IMAGENAME eq Esoterica*"`, so an executable called EsotericaFilterFitter is killed by any engine build that happens while a fit is running.
+    # A fit is tens of minutes and dies silently when that happens, which is the worst way for it to fail.
+    # The fitter is an offline tool that shares nothing with the engine processes that script is after.
+    OUTPUT_NAME "FilterFitter"
 )
 
 message( STATUS "FilterFitter: output in ${CMAKE_BINARY_DIR}/<Config>" )

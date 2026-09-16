@@ -2,3 +2,8 @@ Build/*
 Internal/*
 hdri/*
 *.bat
+PublishedTable_*
+Grid*_ggx_esoterica_cube.bin
+Incumbent_*
+*_fit_backup.fit
+*_validate.csv
