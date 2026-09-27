@@ -17,6 +17,10 @@ namespace FilterFitter
     {
         Cube = 0,
         Tetrahedron = 1,
+
+        // The sphere mapped to an octahedron and unwrapped into one square, which is what the engine's point light shadows already use.
+        // Appended, so the cube's and the tetrahedron's on-disk values are untouched.
+        Octahedral = 2,
     };
 
     // "cube" or "tetrahedron", for a file name, a directory key or a manifest line.
@@ -32,6 +36,27 @@ namespace FilterFitter
 
     // How many textures a level of this map occupies.
     uint32_t GetProbeMapSliceCount( ProbeMap map );
+
+    // The resolution a fit for this map targets: the base a level 0 texture has, which is what sets the lobe-to-texel ratio every level's coefficients are fitted against.
+    //
+    // It is a property of the map rather than one number for the whole tool, because the three maps are for different things.
+    // 128 is a cubemap's: it is the paper's resolution, it is what the published tables are data for, and it is the base every cubemap comparison in this project has been measured at.
+    // 256 is an octahedral map's, because that is what the runtime will actually allocate - the closest power of two to the 313 that would match a 128 cubemap texel for texel, so the runtime gets comparable quality for about two thirds of the work per probe.
+    // A tetrahedral map is here for completeness and cross-validation, and stays at the cubemap's base so the two remain directly comparable.
+    uint32_t GetProbeMapBaseResolution( ProbeMap map );
+
+    // The training grid a fit of this map uses, a FLOOR under the sampling policy in TableHarness.h rather than a count of directions.
+    // Per map because it is spent against the map's own base resolution and the two are chosen together: a grid of 8 at base 128 samples one texel in 256, which is what every cubemap number was taken at, while the octahedral map is fitted at base 256 where a floor of 8 would leave every level but the first trained on a quarter of the directions it could afford.
+    // The tetrahedral map keeps 8 so its measurements do not move, and at base 128 the sampling policy's fraction is at most 8, so for both of those maps this value is the only thing the grid has ever been.
+    inline uint32_t GetProbeMapFitGridSize( ProbeMap map )
+    {
+        if( map == ProbeMap::Octahedral )
+        {
+            return 16;
+        }
+
+        return 8;
+    }
 
     // Whether a value read from a file names a map. 
     // The on-disk field is a uint32, so a hostile or corrupted file can hold anything; this is what lets a reader reject it before it becomes an enum.

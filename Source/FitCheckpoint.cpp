@@ -248,10 +248,9 @@ namespace FilterFitter
             return LoadResult::Corrupt;
         }
 
-        // The fingerprint is published before it is judged, not only on success.
-        // A refused caller needs to know WHAT the checkpoint is in order to decide whether the difference matters, and the training parameters describe the fit rather than the table, so a reader is entitled to accept a checkpoint this comparison refuses.
-        // Without this the refused caller sees a zeroed fingerprint, which is how a relaxation of this check ends up comparing against nothing.
-        m_fingerprint = stored;
+        // The fingerprint is published before it is judged, not only on success, but into its OWN member.
+        // m_fingerprint is the caller's expectation - the fit driver builds it from its own settings and passes it back in - so writing the file's values there compares the file against itself and no mismatch can be refused.
+        m_storedFingerprint = stored;
 
         // The fingerprint is checked before any level data is touched, so a refusal cannot leave a half-loaded state behind
         char difference[256] = {};

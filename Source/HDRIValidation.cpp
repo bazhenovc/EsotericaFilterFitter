@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -361,13 +362,13 @@ namespace FilterFitter
             {
                 FitFingerprint relaxed = expected;
 
-                relaxed.m_baseResolution = checkpoint.m_fingerprint.m_baseResolution;
-                relaxed.m_sampleLevelCount = checkpoint.m_fingerprint.m_sampleLevelCount;
-                relaxed.m_gridSize = checkpoint.m_fingerprint.m_gridSize;
-                relaxed.m_supersampleRate = checkpoint.m_fingerprint.m_supersampleRate;
-                relaxed.m_referenceSmoothing = checkpoint.m_fingerprint.m_referenceSmoothing;
-                relaxed.m_measure = checkpoint.m_fingerprint.m_measure;
-                relaxed.m_weighting = checkpoint.m_fingerprint.m_weighting;
+                relaxed.m_baseResolution = checkpoint.m_storedFingerprint.m_baseResolution;
+                relaxed.m_sampleLevelCount = checkpoint.m_storedFingerprint.m_sampleLevelCount;
+                relaxed.m_gridSize = checkpoint.m_storedFingerprint.m_gridSize;
+                relaxed.m_supersampleRate = checkpoint.m_storedFingerprint.m_supersampleRate;
+                relaxed.m_referenceSmoothing = checkpoint.m_storedFingerprint.m_referenceSmoothing;
+                relaxed.m_measure = checkpoint.m_storedFingerprint.m_measure;
+                relaxed.m_weighting = checkpoint.m_storedFingerprint.m_weighting;
 
                 if ( checkpoint.Load( pCheckpointPath, relaxed, FitCheckpoint::FingerprintCheck::Configuration ) != FitCheckpoint::LoadResult::Loaded )
                 {
@@ -717,16 +718,22 @@ namespace FilterFitter
 
             if ( TMap::NumSlices == 1 )
             {
+                // The showcase names the map it drew. This branch used to be the tetrahedral map's alone and named every single-slice map after it, so a run on the octahedral map wrote octahedral numbers into a file called tetrahedral_esoterica.exr - and a mislabelled comparison image is worse than no image, because the whole point of it is reading a named map's result against the reference.
+                // The tetrahedral spelling stays exactly as it was rather than being derived from GetProbeMapName, which returns "tetrahedron": this is an artifact name, and renaming one that already exists would orphan it for no gain.
+                char const* const pShowcaseFileName = ( ProbeMapOf< TMap >::Value == ProbeMap::Octahedral )
+                    ? "octahedral_esoterica.exr"
+                    : "tetrahedral_esoterica.exr";
+
                 std::printf( "    layout      row 0 the source, row 1 brute force, row 2 the table's, row 3 the\n" );
                 std::printf( "                naive mip chain, one level per column, every level point upsampled\n" );
 
                 if ( ( fittedCase >= 0 ) && ( pFirstValidated != nullptr ) )
                 {
-                    WriteShowcase< TMap >( settings, directory, "tetrahedral_esoterica.exr", *pFirstValidated, cases[fittedCase], "first environment with a result" );
+                    WriteShowcase< TMap >( settings, directory, pShowcaseFileName, *pFirstValidated, cases[fittedCase], "first environment with a result" );
                 }
                 else
                 {
-                    std::printf( "    tetrahedral_esoterica.exr  skipped: no fitted table for this curve\n" );
+                    std::printf( "    %-25s skipped: no fitted table for this curve\n", pShowcaseFileName );
                 }
 
                 std::fflush( stdout );
@@ -890,6 +897,22 @@ namespace FilterFitter
             if ( LoadFittedTable( settings.pCheckpointPath, settings.m_evaluation, settings.m_shape, settings.m_curve, fitted.m_table, message ) )
             {
                 fitted.m_name = std::string( "fitted_" ) + settings.m_curve.GetName();
+
+                // The name is what the stage key is built from, and every fitted table was called "fitted_<curve>", so a re-fitted table reused the previous table's cached convolutions and this report repeated the old row verbatim. It has now produced two wrong readings that way, which is exactly the failure a cache keyed by a constant name cannot avoid.
+                // The checkpoint's own size and write time change whenever the table is re-fitted and cost nothing to read here, so the name carries them.
+                // The published tables are data this build ships, are named by their own file, and are not keyed this way, so their keys are unchanged.
+                // The suffix is in the printed row as well as in the key: a row that says which checkpoint it came from is the point of the suffix rather than a side effect of it.
+                std::error_code checkpointError;
+                uintmax_t const checkpointBytes = std::filesystem::file_size( settings.pCheckpointPath, checkpointError );
+
+                if ( checkpointBytes != static_cast<uintmax_t>( -1 ) )
+                {
+                    std::filesystem::file_time_type const checkpointWritten = std::filesystem::last_write_time( settings.pCheckpointPath, checkpointError );
+                    uint64_t const checkpointStamp = static_cast<uint64_t>( checkpointWritten.time_since_epoch().count() );
+
+                    fitted.m_name += ".s" + std::to_string( static_cast<unsigned long long>( checkpointBytes ) );
+                    fitted.m_name += ".t" + std::to_string( static_cast<unsigned long long>( checkpointStamp ) );
+                }
                 fitted.m_curve = settings.m_curve;
 
                 cases.push_back( fitted );
@@ -1003,6 +1026,58 @@ namespace FilterFitter
 
                     levelL1[caseIndex][level] += error.m_relativeL1;
                     levelRms[caseIndex][level] += error.m_relativeRms;
+
+                    //  Where the error lives, per region, for the map whose texel solid angle varies
+                    //-------------------------------------------------------------------------
+                    //  Printed per asset and per level rather than aggregated here: this block runs once for every asset, so a summary would need a second set of accumulators and a second place to print from, and one line per ( asset, level ) is already what a reader wants when the question is whether the error is concentrated.
+                    //  Only for the octahedral map, which is the only one with a Jacobian band to cut. The other two accumulate the same fields and never print them, so their runs are unchanged line for line.
+                    //-------------------------------------------------------------------------
+
+                    if constexpr ( ProbeMapOf< TMap >::Value == ProbeMap::Octahedral )
+                    {
+                        //  PROBE: unconditional, and outside the count check below
+                        //-------------------------------------------------------------------------
+                        //  It must print exactly once per asset per level, and reading it decides the fault:
+                        //      marker absent                  this block is not reached at all, so the fault is the enclosing guard or the type this template was instantiated with, not the accumulation
+                        //      marker present, sumCount 0     the block runs and the accumulators are empty, so the fault is in the walk that fills them, or in the error object being rebuilt from a cached record that does not carry them
+                        //      marker present, sumCount > 0   the accumulators are fine, and the loop below is what needs looking at
+                        //-------------------------------------------------------------------------
+
+                        uint32_t regionCountTotal = 0;
+
+                        for ( uint32_t region = 0; region < ConvolutionError::NumRegions; ++region )
+                        {
+                            regionCountTotal += error.m_regionCount[region];
+                        }
+
+                        std::printf
+                        (
+                            "    region-probe %-30s %-16s lvl %u  entered yes  sumCount %u  count0 %u  ref0 %.6g\n",
+                            asset.m_id.c_str(), validationCase.m_name.c_str(), level,
+                            regionCountTotal, error.m_regionCount[0], error.m_regionReferenceSum[0]
+                        );
+
+                        for ( uint32_t region = 0; region < ConvolutionError::NumRegions; ++region )
+                        {
+                            if ( error.m_regionCount[region] == 0 )
+                            {
+                                continue;
+                            }
+
+                            double const regionL1 = ( error.m_regionReferenceSum[region] > 0.0 )
+                                ? ( error.m_regionAbsoluteSum[region] / error.m_regionReferenceSum[region] )
+                                : 0.0;
+
+                            std::printf
+                            (
+                                "    region    %-30s %-16s lvl %u  face %u band %u  texels %-6u L1 %.5f worst %.5f\n",
+                                asset.m_id.c_str(), validationCase.m_name.c_str(), level,
+                                region / ConvolutionError::NumRegionBands,
+                                region % ConvolutionError::NumRegionBands,
+                                error.m_regionCount[region], regionL1, error.m_regionMaxAbsolute[region]
+                            );
+                        }
+                    }
 
                     if ( error.m_referenceMean > 0.0 )
                     {
@@ -1322,6 +1397,7 @@ namespace FilterFitter
         {
             case ProbeMap::Cube:        return RunHDRIIngestFor< CubeProjection >( settings );
             case ProbeMap::Tetrahedron: return RunHDRIIngestFor< TetrahedralProjection >( settings );
+            case ProbeMap::Octahedral:  return RunHDRIIngestFor< OctahedralProjection >( settings );
         }
 
         std::printf( "ingest: unknown projection value\n" );
@@ -1337,6 +1413,7 @@ namespace FilterFitter
         {
             case ProbeMap::Cube:        return RunHDRIValidateFor< CubeProjection >( settings );
             case ProbeMap::Tetrahedron: return RunHDRIValidateFor< TetrahedralProjection >( settings );
+            case ProbeMap::Octahedral:  return RunHDRIValidateFor< OctahedralProjection >( settings );
         }
 
         std::printf( "validate: unknown projection value\n" );

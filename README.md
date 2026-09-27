@@ -37,7 +37,7 @@ For each direction `n` and each roughness, the renderer needs the average of the
 
 The environment is a reflection probe: a base map holding the surroundings, plus a mip chain of successively blurred copies of it.
 
-Two base maps are supported: a **cubemap** (six square faces in six textures) and a **single-slice tetrahedral map** (four triangles packed into one square texture, after Liao et al).
+Three base maps are supported: a **cubemap** (six square faces in six textures), a **single-slice tetrahedral map** (four triangles packed into one square texture, after Liao et al), and a **single-slice octahedral map** (the sphere mapped to an octahedron and unwrapped into one square, after Praun and Hoppe).
 
 For a real environment map this integral has no closed form, and computing it by brute force takes thousands of samples per pixel. That is affordable offline and not affordable per frame.
 
@@ -92,6 +92,7 @@ How many frames exist is a property of the base map:
 |--------------------------|-------------------------------|--------------------------------|-----------------------|
 | cubemap                  | 3, one per axis               | 2, and a 3rd near a corner     | 24                    |
 | single-slice tetrahedral | 4, one per tetrahedron vertex | 2 to 4                         | 32                    |
+| single-slice octahedral  | 3, the same axial frames as a cubemap | 2 to 3                 | 24                    |
 
 A frame is dropped when its blend weight reaches zero. That weight is zero while the direction is close to the frame's axis and grows as the direction moves away from it. Both maps use 0.75 as the threshold, and each measures distance in its own coordinates: a cubemap uses the largest of the two off-axis components of the direction, each divided by the on-axis one, and a tetrahedral map uses `|d . v|`, the alignment with the frame's vertex.
 
@@ -105,6 +106,7 @@ The two maps also correct the sampled mip level differently, because a texel cov
 |-------------|-------------------------------------------------------------------------|-------------------------|
 | cubemap     | `0.75 * log2( dot( d, d ) )`, with `d` divided by its largest component | 0 to `0.75 * log2( 3 )` |
 | tetrahedral | `-1.5 * log2( n . L )`, with `L` the triangle the sample lands in       | 0 to `1.5 * log2( 3 )`  |
+| octahedral  | `1.5 * log2( \| p \| )`, with `p` the L1-normalized direction           | `-0.75 * log2( 3 )` to 0 |
 
 The tetrahedral span is exactly twice the cubemap's, which is the factor of two in its Jacobian: the ratio between area on the map and area on the sphere. Nothing else about the construction changes between the maps.
 
@@ -117,6 +119,10 @@ A tetrahedral table is roughly 2.5x worse in radiance than a cubemap table of th
 A tetrahedral level at resolution R holds R x R texels over the whole sphere, where a cubemap level holds six faces of R x R. Its texels therefore cover about six times the solid angle, so each one averages a much larger patch of incoming light, and the levels whose lobe is narrow relative to a texel are correspondingly harder to place. The energy is right at both maps - the table's convolution matches the reference's mean - so the difference is placement error, not a normalisation error.
 
 A runtime that wants tetrahedral probes as accurate as cubemap ones at the same lobe width has to use a higher base resolution. The tool supports the tetrahedral map because a tetrahedral probe needs a table of its own, not because it is the better choice where six faces are available.
+
+An octahedral map is also supported, and it is **not shipped**: it is measured and kept as an alternative. Its parameterization sets an accuracy floor no fit of it has beaten, the tradeoff it offers is a smaller and cheaper filter, and the measurements and reasoning are in [Docs/Rendering/Octahedral Reflection Probes.md](../../Docs/Rendering/Octahedral%20Reflection%20Probes.md).
+
+An octahedral level is also one square over the whole sphere, so its texels carry about six times a cube level's solid angle in the same way a tetrahedral map's do. It should do better than the tetrahedral map at equal resolution, because its parameterization is near-uniform in texel footprint - each of the eight octant regions has fixed axis signs, so edges stay straight and the footprint distortion stays bounded - where the tetrahedral tile's is not. **Its measured accuracy has not been taken yet**: the table has been fitted and validated on the corpus once that measurement exists, and until then this paragraph is a geometric expectation rather than a result.
 
 ## 4. Reading a table at run time
 
@@ -142,8 +148,8 @@ The header describes the layout, so a reader can check it instead of assuming it
 | 12     | numParameters         | 5                                                                |
 | 16     | numActiveCoefficients | 1 for a constant table, 3 for a quadratic one                    |
 | 20     | numTapsPerAxis        | 8, 16 or 32                                                      |
-| 24     | projection            | 0 cubemap, 1 tetrahedral                                         |
-| 28     | numAxes               | 3 cubemap, 4 tetrahedral                                         |
+| 24     | projection            | 0 cubemap, 1 tetrahedral, 2 octahedral                           |
+| 28     | numAxes               | 3 cubemap, 3 octahedral, 4 tetrahedral                           |
 | 32     | numIndices            | `numAxes * numTapsPerAxis / 4`                                   |
 | 36     | numFloat4             | `numLevels * numParameters * numActiveCoefficients * numIndices` |
 | 40     | payloadOffset         | 144                                                              |
@@ -161,7 +167,7 @@ The result is the sum of the weighted reads divided by the sum of the weights.
 Two things the runtime has to decide that the provided files do not:
 
 - **The tile's edges.** A single-slice tetrahedral map puts four different faces against one square's border, so a hardware bilinear read near the edge mixes two faces that do not meet there. The tool's own convolution resolves every tap through direction space instead, which is exact but costs four reads and a coordinate conversion per tap. Start with the hardware read and decide from your own measurements whether the seams need the resolved one;
-- **Roughness zero.** A zero-width level is the identity, and the engine reaches it by sampling mip 0 directly rather than by reading the table. A table fitted with a zero-width level stores a mirror level (`-0.75 * log2( 3 )` for a cubemap, `-1.5 * log2( 3 )` for a tetrahedral map), which holds the sampler at or below mip 0 at every direction, so the table is correct there too, but skipping it costs less.
+- **Roughness zero.** A zero-width level is the identity, and the engine reaches it by sampling mip 0 directly rather than by reading the table. A table fitted with a zero-width level stores a mirror level (`-0.75 * log2( 3 )` for a cubemap, `-1.5 * log2( 3 )` for a tetrahedral map, and `0` for an octahedral one), which holds the sampler at or below mip 0 at every direction, so the table is correct there too, but skipping it costs less. The octahedral map's is zero rather than negative because its correction is never positive: an octahedral correction is `1.5 * log2( | p | )` with `| p |` at most 1, so level 0 already saturates the sampler at mip 0 everywhere, where a cube's and a tetrahedral map's corrections both go positive somewhere and need a negative level to cancel that.
 
 ## 5. The fitted cubemap table, and how it is measured
 
@@ -240,7 +246,7 @@ FilterFitter.exe --hdri-validate "E:\mtld\.mtld-texture-cache" --curve esoterica
 
 Ingest decodes each panorama into the selected base map and caches it. The two maps cache separately, under the same environment directory. Only equirectangular panoramas are supported.
 
-Validate convolves every environment twice, once by brute force and once from the table, and reports the difference. Both stages cache their results, so re-running is fast. A cubemap run validates the four published tables beside the fitted one; a tetrahedral run validates the fitted table and nothing else, because the published tables are cubemap data.
+Validate convolves every environment twice, once by brute force and once from the table, and reports the difference. Both stages cache their results, so re-running is fast. A cubemap run validates the four published tables beside the fitted one; a tetrahedral or octahedral run validates the fitted table and nothing else, because the published tables are cubemap data.
 
 Results are written as EXR, one file per slice per level, under `External\FilterFitter\hdri\<environment>\<stage>\`.
 
@@ -271,7 +277,7 @@ Running with no arguments prints the usage, runs the per-stage self-checks and t
 | `--curve <paper\|esoterica>` | The width at each level: `paper` is the reference's gloss curve at spec power 18, and `esoterica` is roughness linear across the levels. |
 | `--spec-power <f>` | The paper curve's spec power. 18 reproduces the published tables.                                                       |
 | `--widths <w0,...,w6>` | One width per level, for a fork whose roughness remap is neither. Overrides `--curve`.                              |
-| `--projection <cube\|tetrahedron>` | Which base map this run is for. It selects the frame the fit and the checks build, the shape the fit produces, the name of every artifact and checkpoint, and the map the HDRI stages are cached and convolved under. |
+| `--projection <cube\|tetrahedron\|octahedral>` | Which base map this run is for. It selects the frame the fit and the checks build, the shape the fit produces, the name of every artifact and checkpoint, and the map the HDRI stages are cached and convolved under. |
 
 **Writing tables.**
 

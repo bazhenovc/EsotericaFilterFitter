@@ -63,7 +63,8 @@ namespace FilterFitter
         // The paper does not state which it used; its level-0 table selects point sampling.
         uint32_t            m_supersampleRate = 1;
 
-        // Sampling grid over each face, per axis
+        // Sampling grid over each SLICE, per axis, and a FLOOR rather than a count: the grid a level samples is max( this, resolution / kTexelsPerSampleAxis ), so the sample grows with the level instead of staying a fixed count. See GetFaceGridSize.
+        // Slices, not faces: a cubemap's six faces are six slices and a single-slice map's eight faces share one, so this is the grid over a texture and not over a face of the sphere.
         uint32_t            m_gridSize = 4;
 
         // Levels in the intermediate mip chain the taps read.
@@ -148,7 +149,20 @@ namespace FilterFitter
     template< typename TMap >
     void BuildOutputTexelList( uint32_t resolution, uint32_t gridSize, std::vector<uint32_t>& texels );
 
-    // The clamped sampling grid per face for a level: min( gridSize, resolution )
+    // One sample per this many texels per axis, as a fraction of the level
+    //-------------------------------------------------------------------------
+    // A sampling grid that is a COUNT is resolution-independent: at 8 it samples the same 64 directions over a single-slice map at every level and at every base resolution, so a level with 120 unknowns is trained on 64 texels whether the level holds 16 thousand of them or 65 thousand.
+    // Fewer samples than unknowns is an underdetermined system: the optimizer drives the sampled residual toward zero and leaves the table unconstrained between the sampled directions. That is what a fit that is insensitive to base resolution looks like from the inside.
+    //
+    // So the grid is a FRACTION of the level per axis, with the configured grid as a floor.
+    // 16 gives 8 at a 128 level and 16 at a 256 one, i.e. a base 256 level samples 256 directions where it used to sample 64.
+    //-------------------------------------------------------------------------
+
+    static constexpr uint32_t kTexelsPerSampleAxis = 16;
+
+    // The sampling grid for a level: one sample per kTexelsPerSampleAxis texels per axis, never fewer than the configured grid and never more than the level's own resolution.
+    //
+    // At the base resolution this project has measured, 128, the fraction is at most 8 and the floor is the configured grid, so a fit at grid 8 samples exactly what it sampled before and every measurement taken at 128 stays reproducible. The change only shows where a level is larger than 16 times the configured grid.
     uint32_t GetFaceGridSize( uint32_t resolution, uint32_t gridSize );
 
     //-------------------------------------------------------------------------

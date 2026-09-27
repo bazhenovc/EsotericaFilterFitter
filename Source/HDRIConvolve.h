@@ -50,6 +50,31 @@ namespace FilterFitter
         // The two peaks say which side produced one: a table whose peak exceeds the reference's has put energy where the reference did not, and a reference whose peak exceeds the source's is the estimator itself aliasing a small bright source.
         double      m_referencePeak = 0.0;
         double      m_approximatePeak = 0.0;
+
+        //  Diagnostic: the same comparison split by region of the map
+        //-------------------------------------------------------------------------
+        //  So that a hypothesis about WHERE an approximation is wrong is tested rather than argued.
+        //  The regions are the map's OWN decomposition - its faces, from MapTexel::m_face, which the projection already resolves - crossed with a band of the solid-angle Jacobian, so nothing here re-derives the geometry.
+        //
+        //  The band is the point of it: J = 1 / |p|^3 with |p| the length of the L1-normalized direction at the texel's centre, which runs from 1 at the octahedral map's finest texels (the diamond's vertices and the square's corners) to 5.196 at its coarsest (the eight octant centres).
+        //  A quadrature over texels and an analytic integral disagree most where the texels are coarsest, so if that is what the octahedral map's residual error is made of, these bands show it as a trend instead of a flat floor.
+        //
+        //  Absolute sums rather than ratios, because a region's own relative error is its absolute sum over its own reference sum; both are carried so either can be printed.
+        //  Only the octahedral map uses them: for the cube and the tetrahedral map every texel lands in band 0 of its own face, no band trend exists to test, and nothing accumulates differently.
+        //-------------------------------------------------------------------------
+
+        static constexpr uint32_t NumRegionBands = 3;
+        static constexpr uint32_t NumMaxFaces = 8;
+        static constexpr uint32_t NumRegions = NumMaxFaces * NumRegionBands;
+
+        double      m_regionAbsoluteSum[NumRegions] = {};
+        double      m_regionReferenceSum[NumRegions] = {};
+        uint32_t    m_regionCount[NumRegions] = {};
+        double      m_regionMaxAbsolute[NumRegions] = {};
+
+        double      m_faceAbsoluteSum[NumMaxFaces] = {};
+        double      m_faceReferenceSum[NumMaxFaces] = {};
+        uint32_t    m_faceCount[NumMaxFaces] = {};
     };
 
     //-------------------------------------------------------------------------

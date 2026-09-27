@@ -174,4 +174,5 @@ namespace FilterFitter
 
     template class PreimageAccumulator< CubeProjection >;
     template class PreimageAccumulator< TetrahedralProjection >;
+    template class PreimageAccumulator< OctahedralProjection >;
 }

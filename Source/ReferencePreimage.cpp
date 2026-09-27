@@ -2,6 +2,7 @@
 #include "ReferencePreimage.h"
 
 #include "CubeReferenceFrame.h"
+#include "OctahedralProjection.h"
 #include "ProfileBeckmann.h"
 #include "ProfileGGX.h"
 #include "TetrahedralProjection.h"
@@ -266,6 +267,9 @@ namespace FilterFitter
     template void ReferencePreimage< CubeReferenceFrame >::Evaluate< ProfileBeckmann >( ProfileBeckmann const& profile, double const* pOutputDirection );
 
     template class ReferencePreimage< MapReferenceFrame< TetrahedralProjection > >;
+    template class ReferencePreimage< MapReferenceFrame< OctahedralProjection > >;
     template void ReferencePreimage< MapReferenceFrame< TetrahedralProjection > >::Evaluate< ProfileGGX >( ProfileGGX const& profile, double const* pOutputDirection );
+    template void ReferencePreimage< MapReferenceFrame< OctahedralProjection > >::Evaluate< ProfileGGX >( ProfileGGX const& profile, double const* pOutputDirection );
     template void ReferencePreimage< MapReferenceFrame< TetrahedralProjection > >::Evaluate< ProfileBeckmann >( ProfileBeckmann const& profile, double const* pOutputDirection );
+    template void ReferencePreimage< MapReferenceFrame< OctahedralProjection > >::Evaluate< ProfileBeckmann >( ProfileBeckmann const& profile, double const* pOutputDirection );
 }

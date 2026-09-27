@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "MapProjection.h"
+#include "OctahedralProjection.h"
 #include "TetrahedralProjection.h"
 
 // Quadratic b-spline recurrence, and its transpose

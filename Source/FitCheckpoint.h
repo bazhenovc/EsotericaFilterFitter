@@ -134,6 +134,10 @@ namespace FilterFitter
         LevelState      m_levels[CoefficientTable::NumLevels];
         char            m_message[256] = {};
 
+        // The fingerprint read from the file, published even when the load is refused, so a refused caller can decide whether the difference matters - a reader is entitled to accept a checkpoint the comparison rejects.
+        // Deliberately NOT m_fingerprint: that member is the caller's EXPECTATION, which the fit driver builds from its own settings and passes straight back to Load. Writing the file's fingerprint into it compares the file against itself, and then no mismatch can ever be refused - which is how every fit came to resume from a checkpoint written by different settings.
+        FitFingerprint  m_storedFingerprint;
+
         // Reads pPath and checks the stored fingerprint against expected. On Incompatible or Corrupt nothing is loaded and m_message explains why.
         LoadResult Load( char const* pPath, FitFingerprint const& expected, FingerprintCheck check );
 

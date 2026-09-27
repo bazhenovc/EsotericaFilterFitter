@@ -84,8 +84,11 @@ namespace FilterFitter
 
                     if ( !interior )
                     {
-                        // Phantom texel centre, in the sample's own chart and allowed past its edge, then resolved by direction. 
-                        // The chart is the one the sample landed in, not whichever chart holds the phantom's coordinate: on a map whose seams are discontinuous those are different directions, and the continuation of this chart is the right one.
+                        // Phantom texel centre, in the sample's own chart and allowed past its edge, then resolved by direction.
+                        //
+                        // The face argument is the chart the sample landed in, and on a cube face or a tetrahedral tile that chart's own continuation IS the right one: a cube face's coordinates continue onto the neighbouring face's plane, and a tetrahedral tile's edges are real adjacencies, so both of those projections use the argument.
+                        // The octahedral map is the exception and this comment used to state its opposite as a general rule: the square's outer boundary is a fold whose other side is the octant across the equator, mirrored, so the continuation of THIS chart crosses the equator and names a different point on the sphere. That projection therefore derives its region from the phantom's coordinate and ignores the argument.
+                        // Passing the chart is still what this call site has to do, because it serves all three maps and two of them need it.
                         double phantomU = 0.0;
                         double phantomV = 0.0;
                         TMap::GetTexelCentreUVOutside( &phantomU, &phantomV, floorX + stepX, floorY + stepY, resolution );
@@ -417,16 +420,21 @@ namespace FilterFitter
 
     template void ResampleEquirectToMap< CubeProjection >( float const*, uint32_t, uint32_t, uint32_t, uint32_t, HDRIImage& );
     template void ResampleEquirectToMap< TetrahedralProjection >( float const*, uint32_t, uint32_t, uint32_t, uint32_t, HDRIImage& );
+    template void ResampleEquirectToMap< OctahedralProjection >( float const*, uint32_t, uint32_t, uint32_t, uint32_t, HDRIImage& );
 
     template void BuildSourceChain< CubeProjection >( HDRIImage const&, uint32_t, JacobianWeighting, std::vector<HDRIImage>& );
     template void BuildSourceChain< TetrahedralProjection >( HDRIImage const&, uint32_t, JacobianWeighting, std::vector<HDRIImage>& );
+    template void BuildSourceChain< OctahedralProjection >( HDRIImage const&, uint32_t, JacobianWeighting, std::vector<HDRIImage>& );
 
     template void SampleChain< CubeProjection >( std::vector<HDRIImage> const&, double, double const*, double* );
     template void SampleChain< TetrahedralProjection >( std::vector<HDRIImage> const&, double, double const*, double* );
+    template void SampleChain< OctahedralProjection >( std::vector<HDRIImage> const&, double, double const*, double* );
 
     template void SampleImage< CubeProjection >( HDRIImage const&, double const*, double* );
     template void SampleImage< TetrahedralProjection >( HDRIImage const&, double const*, double* );
+    template void SampleImage< OctahedralProjection >( HDRIImage const&, double const*, double* );
 
     template void GetImageStatistics< CubeProjection >( HDRIImage const&, double&, double& );
     template void GetImageStatistics< TetrahedralProjection >( HDRIImage const&, double&, double& );
+    template void GetImageStatistics< OctahedralProjection >( HDRIImage const&, double&, double& );
 }

@@ -2,6 +2,7 @@
 #include "PreimageError.h"
 
 #include "CubeReferenceFrame.h"
+#include "OctahedralProjection.h"
 #include "TetrahedralProjection.h"
 
 #include <cmath>
@@ -61,4 +62,5 @@ namespace FilterFitter
     template PreimageComparison ComparePreimages< CubeReferenceFrame >( CubeReferenceFrame const& baseFrame, std::vector<double> const& referenceValues, std::vector<double> const& approximationValues, double approximationWeightSum, ErrorMeasure measure );
 
     template PreimageComparison ComparePreimages< MapReferenceFrame< TetrahedralProjection > >( MapReferenceFrame< TetrahedralProjection > const& baseFrame, std::vector<double> const& referenceValues, std::vector<double> const& approximationValues, double approximationWeightSum, ErrorMeasure measure );
+    template PreimageComparison ComparePreimages< MapReferenceFrame< OctahedralProjection > >( MapReferenceFrame< OctahedralProjection > const& baseFrame, std::vector<double> const& referenceValues, std::vector<double> const& approximationValues, double approximationWeightSum, ErrorMeasure measure );
 }

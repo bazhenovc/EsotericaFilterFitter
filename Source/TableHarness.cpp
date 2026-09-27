@@ -160,6 +160,7 @@ namespace FilterFitter
     template void BuildTableTaps< CubeProjection >( CoefficientTable const&, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, std::vector<TableTap>& );
 
     template void BuildTableTaps< TetrahedralProjection >( CoefficientTable const&, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, std::vector<TableTap>& );
+    template void BuildTableTaps< OctahedralProjection >( CoefficientTable const&, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, std::vector<TableTap>& );
 
     //-------------------------------------------------------------------------
 
@@ -422,9 +423,20 @@ namespace FilterFitter
 
     //-------------------------------------------------------------------------
 
+    //  The sampling policy, in one place
+    //-------------------------------------------------------------------------
+    //  There used to be a second copy of this expression where the fit-cost estimate samples its levels, and a duplicated policy drifts: that copy would have gone on quoting the cost of a sampling the fit no longer pays.
+    //  Everything that needs the grid calls this.
+    //-------------------------------------------------------------------------
+
     uint32_t GetFaceGridSize( uint32_t resolution, uint32_t gridSize )
     {
-        return ( gridSize < resolution ) ? gridSize : resolution;
+        uint32_t const scaled = resolution / kTexelsPerSampleAxis;
+
+        // Never fewer than the configured grid, and never more than the level has texels: a grid larger than the resolution would compute texel coordinates past the last one, which is the case the clamp here has always existed for.
+        uint32_t const requested = ( scaled > gridSize ) ? scaled : gridSize;
+
+        return ( requested < resolution ) ? requested : resolution;
     }
 
     //-------------------------------------------------------------------------
@@ -457,6 +469,7 @@ namespace FilterFitter
 
     template void BuildOutputTexelList< CubeProjection >( uint32_t, uint32_t, std::vector<uint32_t>& );
     template void BuildOutputTexelList< TetrahedralProjection >( uint32_t, uint32_t, std::vector<uint32_t>& );
+    template void BuildOutputTexelList< OctahedralProjection >( uint32_t, uint32_t, std::vector<uint32_t>& );
 
     //-------------------------------------------------------------------------
 

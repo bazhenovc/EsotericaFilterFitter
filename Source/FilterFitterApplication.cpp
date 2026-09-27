@@ -10,6 +10,7 @@
 #include "LevelObjective.h"
 #include "MapProjection.h"
 #include "TetrahedralProjection.h"
+#include "OctahedralProjection.h"
 #include "Optimizer.h"
 #include "ParallelFor.h"
 #include "PreimageAccumulator.h"
@@ -122,8 +123,6 @@ static constexpr uint32_t g_conformanceGridSize = 4;
 //
 // Conformance asks whether this tool reproduces the paper's tables at the sample the paper's numbers were measured on, so its grid is fixed by that comparison.
 // The fit wants the densest training sample it can pay for, because a sample that is too coarse caps what the table can learn no matter what the optimizer does: the objective it descends is then an average over too few directions, and the table is free to be wrong between them.
-static constexpr uint32_t g_fitGridSize = 8;
-
 static constexpr uint32_t g_conformanceSupersampleRate = 1;
 
 static constexpr double g_pi = std::numbers::pi_v<double>;
@@ -753,10 +752,17 @@ static bool RunBsplineRecurrenceSelfCheck()
         {
             double const oneDimensional[4] = { 0.125, 0.375, 0.375, 0.125 };
 
-            // Any texel whose 4x4 footprint stays inside one face. A quarter of the way down a face is far enough from every seam of either map.
+            // Any texel whose 4x4 footprint stays inside one face.
+            //
+            // WHERE that is depends on the map, and the three maps do not agree.
+            // At ( coarse/2, coarse/4 ) an octahedral map's u is a half texel from 0, and 0 is its midline, which is the boundary between two of its eight faces: the footprint straddles that boundary, m_crossesFace is set, and this whole check reports the sentinel below instead of validating anything.
+            // A cubemap's u of 0 is the middle of a face and a tetrahedral tile has no boundary there, so the same texel is interior on those two and the anchor was fine until a map with a midline existed.
+            //
+            // Five eighths along x and a quarter along y is interior on all three: well inside one cube face, inside the tetrahedral tile's first triangle and clear of both its diagonals, and inside the octahedral square's first octant, clear of both midlines and of the diamond's edge with room for the footprint.
+            // The anchor only has to be a texel whose footprint is interior, because the kernel being checked is the same at every one of them: it is a position, not a measurement.
             uint32_t const anchorSlice = 0;
-            uint32_t const anchorX = coarseResolution / 2;
-            uint32_t const anchorY = coarseResolution / 4;
+            uint32_t const anchorX = ( coarseResolution * 5u ) / 8u;
+            uint32_t const anchorY = coarseResolution / 4u;
 
             DownsampleFootprint footprint;
             ComputeDownsampleFootprint< TMap >( anchorSlice, anchorX, anchorY, coarseResolution, weighting, footprint );
@@ -962,12 +968,53 @@ static bool RunBsplineRecurrenceSelfCheck()
             // A deviation away from any cross-face footprint is a bug: nothing else can break the partition of unity.
             // An unsupported texel is a different statement - no coarse footprint reads it at all - and it is reported rather than failed on, because on a map whose seams are lines rather than points the fold can leave texels unread.
             // How many is a property of the map, and it is what the number is for.
-            bool const deviationOk = ( unexplainedTexels == 0 );
+            //
+            // Every deviation being accounted for by a cross-face footprint is necessary but NOT sufficient, and saying why is the point of this comment: before the fold was resolved through direction space, the wrong direction still resolved onto a face, so the old code reported 460 deviating texels with 0 unaccounted for and passed.
+            // A criterion that the bug satisfies is not a regression test, so the octahedral map is also held to a BOUND on the count.
+            //
+            // THE BOUND IS THE CORNERS. A coarse texel at a corner of the square owns a 2x2 block of the fine level, so four corners is 16 fine texels at any level, and those are the 16 that remain once the edges are exact.
+            // A corner is where the crossing weight has nowhere correct to go: a phantom one step past a corner resolves to the OPPOSITE corner, because the direction its coordinate names is outside the domain the square covers, so its weight is added to that corner's territory and lost from its own.
+            // No correspondence rule can fix it - that is what the edge case proved, where the crossing phantom mirrors onto its own coarse texel's territory and merges exactly - which is why the number is a bound rather than zero.
+            //
+            // A one-texel ring is what removes it: the crossing weight lands on the ring instead of on a real texel, in the fitter's chain exactly as in the runtime, and a ( N + 2 ) chain gets the corners for free. The day the chain is padded, this bound becomes 0 and nothing else here changes.
+            //
+            // The cube and the tetrahedral map need no bound: neither has a fold, so their upsample of a constant is exact, and the criterion for them stays what it always was.
+            bool const isOctahedral = ( ProbeMapOf< TMap >::Value == ProbeMap::Octahedral );
+
+            constexpr uint32_t octahedralCornerResidual = 16u;
+
+            bool const deviationsAccountedFor = ( unexplainedTexels == 0 );
+            bool const withinCornerResidual = ( !isOctahedral ) || ( deviatingTexels <= octahedralCornerResidual );
+            bool const deviationOk = deviationsAccountedFor && withinCornerResidual;
+
+            // The label says which of the three states this is, so a pass carries its reason: nothing deviates, only the corners do and a ring removes them, or something moved that the fold does not explain.
+            char const* pDeviationLabel = "FAIL (a deviation is unaccounted for)";
+
+            if ( deviationsAccountedFor )
+            {
+                if ( deviatingTexels == 0 )
+                {
+                    pDeviationLabel = "PASS (exact)";
+                }
+                else if ( isOctahedral && withinCornerResidual )
+                {
+                    pDeviationLabel = "PASS (corners only, a ring removes them)";
+                }
+                else if ( !isOctahedral )
+                {
+                    pDeviationLabel = "PASS (seam-local)";
+                }
+                else
+                {
+                    pDeviationLabel = "FAIL (more than the corner residual)";
+                }
+            }
+
             std::printf
             (
                 "      upsampled-constant deviation: %u of %zu texels, worst %.3e, %u not reached by a cross-face footprint : %s\n",
                 deviatingTexels, fineCount, maxDeviation, unexplainedTexels,
-                deviationOk ? "PASS (seam-local)" : "FAIL (not seam-local)"
+                pDeviationLabel
             );
             std::printf
             (
@@ -2191,6 +2238,7 @@ static bool RunShowcaseWriterCheck()
 
     ShowcaseImage image;
     ComposeShowcaseImage< TetrahedralProjection >( showcase, image );
+    ComposeShowcaseImage< OctahedralProjection >( showcase, image );
 
     // Written where the other artifacts go, and removed again
     std::string const path = FF_ARTIFACT_DIRECTORY "/FilterFitter_showcase_check.exr";
@@ -2220,6 +2268,7 @@ static bool RunShowcaseSelfCheck()
 
     passed = RunShowcaseLayoutCheck< CubeProjection >() && passed;
     passed = RunShowcaseLayoutCheck< TetrahedralProjection >() && passed;
+    passed = RunShowcaseLayoutCheck< OctahedralProjection >() && passed;
 
     passed = RunShowcaseWriterCheck() && passed;
 
@@ -3043,7 +3092,13 @@ static bool RunTableFitCheck
 
     // The fit trains at its own grid rather than the one conformance is scored on.
     // Everything downstream of the fit - the checkpoint's fingerprint, the write-out and the HDRI validation's own scoring - keeps the grid it was given, so a table fitted here is still measured the way the published numbers were.
-    fitSettings.m_evaluation.m_gridSize = g_fitGridSize;
+    fitSettings.m_evaluation.m_gridSize = GetProbeMapFitGridSize( shape.m_projection );
+
+    // The base resolution is the map's, not a constant of the tool.
+    // Every level's coefficients are fitted against a lobe-to-texel ratio, and that ratio is set by the resolution the runtime will actually allocate, so a table should be fitted for the map it is for rather than for whichever map happened to be fitted first.
+    // A cubemap is fitted at the paper's 128; an octahedral map at the 256 the engine runs; see GetProbeMapBaseResolution.
+    fitSettings.m_evaluation.m_baseResolution = GetProbeMapBaseResolution( shape.m_projection );
+
     fitSettings.m_shape = shape;
     fitSettings.m_pSeed = ( seedFromPublished && hasPublishedShape ) ? &seed : nullptr;
     fitSettings.m_pCheckpointPath = pCheckpointPath;
@@ -4180,7 +4235,8 @@ static void RunOptimizerBenchmark()
         for ( uint32_t level : { 0u, 3u, 6u } )
         {
             uint32_t const resolution = settings.m_baseResolution >> level;
-            uint32_t const faceGridSize = ( settings.m_gridSize < resolution ) ? settings.m_gridSize : resolution;
+            // The estimate has to sample what the fit samples, so this asks the policy rather than repeating it: an inlined copy would go on quoting a fit cost the fit no longer pays.
+            uint32_t const faceGridSize = GetFaceGridSize( resolution, settings.m_gridSize );
             uint32_t const numOutputTexels = CubeReferenceFrame::NumFaces * faceGridSize * faceGridSize;
 
             double const inverseResolution = 1.0 / static_cast<double>( resolution );
@@ -4453,8 +4509,8 @@ static void PrintUsage()
     std::printf( "                          brute-force result beside the table's, at every level,\n" );
     std::printf( "                          each level point upsampled so the texel grid shows.\n" );
     std::printf( "                          A cubemap gets esoterica_best, fireflies_paper and\n" );
-    std::printf( "                          fireflies_esoterica; a tetrahedral map gets\n" );
-    std::printf( "                          tetrahedral_esoterica. `dir` is optional: the images\n" );
+    std::printf( "                          fireflies_esoterica; a single-slice map gets its own\n" );
+    std::printf( "                          <map>_esoterica, named for the map it drew. `dir` is\n" );
     std::printf( "                          go beside the CSV, or into --hdri-dir without one.\n" );
     std::printf( "  --hdri-csv <path>       Dump every per-asset per-table per-level number, so an\n" );
     std::printf( "                          outlier claim can be checked against its value.\n" );
@@ -4536,7 +4592,13 @@ static void PrintUsage()
     std::printf( "  --widths <w0,...,w6>\n" );
     std::printf( "                  One width per level, for a fork whose roughness remap is neither.\n" );
     std::printf( "\n" );
-    std::printf( "  --projection <cube|tetrahedron>\n" );
+    std::printf( "  --octahedral-correction <scale>\n" );
+    std::printf( "                  DIAGNOSTIC ONLY. Multiplies the octahedral map's level\n" );
+    std::printf( "                  correction, which is 1.5 * log2( |p| ) as derived in\n" );
+    std::printf( "                  OctahedralProjection.h. Default 1. Sweep it to find out whether a\n" );
+    std::printf( "                  measured error floor tracks the correction; nothing else reads it.\n" );
+    std::printf( "\n" );
+    std::printf( "  --projection <cube|tetrahedron|octahedral>\n" );
     std::printf( "                  Which base map this run is for. Default cube. It selects the\n" );
     std::printf( "                  frame the fit and the checks build, the shape the fit produces,\n" );
     std::printf( "                  the name of every artifact and checkpoint, and the map the HDRI\n" );
@@ -4677,11 +4739,11 @@ static bool RunSelectedChecks
         }
 
         // The fit probes answer questions about the FIT, so they run at the grid the fit trains at.
-        // At the harness grid they would report on a configuration nothing produces: whether a level is truncated, or its training sample is too coarse, is a question about the table that is actually fitted, and that table is fitted at g_fitGridSize.
+        // At the harness grid they would report on a configuration nothing produces: whether a level is truncated, or its training sample is too coarse, is a question about the table that is actually fitted, and that table is fitted at the map's own grid - see GetProbeMapFitGridSize.
         //
         // --sample-size reads its second arm as twice this one, so this is also what makes it the grid-against-twice-the-grid comparison it claims to be.
         EvaluationSettings fitEvaluation = settings;
-        fitEvaluation.m_gridSize = g_fitGridSize;
+        fitEvaluation.m_gridSize = GetProbeMapFitGridSize( shape.m_projection );
 
         if ( selection.m_split )
         {
@@ -4704,7 +4766,7 @@ static bool RunSelectedChecks
         // The fit trains at its own grid, so the fingerprint it wrote carries that grid rather than the one this harness was called with.
         // Building the expectation from the harness settings refuses the checkpoint the fit itself just wrote, which is what happened when the two grids first differed.
         EvaluationSettings fitExpected = settings;
-        fitExpected.m_gridSize = g_fitGridSize;
+        fitExpected.m_gridSize = GetProbeMapFitGridSize( shape.m_projection );
 
         // The seed is deliberately left out, so a seeded fit can still be written out by a run that does not repeat the seeding flags.
         FitFingerprint const expected = FitFingerprint::Make( fitExpected, shape, profile, "" );
@@ -5057,6 +5119,16 @@ int main( int argc, char** argv )
 
             specPower = std::strtod( argv[++argumentIndex], nullptr );
         }
+        else if ( std::strcmp( pArgument, "--octahedral-correction" ) == 0 )
+        {
+            if ( ( argumentIndex + 1 ) >= argc )
+            {
+                std::printf( "--octahedral-correction needs a value\n" );
+                return 1;
+            }
+
+            g_octahedralLevelCorrectionScale = std::strtod( argv[++argumentIndex], nullptr );
+        }
         else if ( std::strcmp( pArgument, "--widths" ) == 0 )
         {
             if ( ( argumentIndex + 1 ) >= argc )
@@ -5238,13 +5310,16 @@ int main( int argc, char** argv )
     bool passed = true;
     passed = RunMapFrameCheck< CubeProjection >( g_paperBaseResolution ) && passed;
     passed = RunMapFrameCheck< TetrahedralProjection >( g_paperBaseResolution ) && passed;
+    passed = RunMapFrameCheck< OctahedralProjection >( g_paperBaseResolution ) && passed;
     passed = RunProfileSelfCheck() && passed;
     passed = RunReferencePreimageSelfCheck() && passed;
     passed = RunBsplineRecurrenceSelfCheck< CubeProjection >() && passed;
     passed = RunBsplineRecurrenceSelfCheck< TetrahedralProjection >() && passed;
+    passed = RunBsplineRecurrenceSelfCheck< OctahedralProjection >() && passed;
     passed = RunUpsampleOperatorSelfCheck() && passed;
     passed = RunPreimageAccumulatorSelfCheck< CubeReferenceFrame >() && passed;
     passed = RunPreimageAccumulatorSelfCheck< MapReferenceFrame< TetrahedralProjection > >() && passed;
+    passed = RunPreimageAccumulatorSelfCheck< MapReferenceFrame< OctahedralProjection > >() && passed;
     passed = RunPreimageErrorSelfCheck() && passed;
 
     RunPublishedTableConformanceTest();
@@ -5254,10 +5329,12 @@ int main( int argc, char** argv )
     passed = RunMapProjectionCheck< CubeProjection >() && passed;
 
     passed = RunMapProjectionCheck< TetrahedralProjection >() && passed;
+    passed = RunMapProjectionCheck< OctahedralProjection >() && passed;
 
     passed = RunTapLayoutSelfCheck< CubeProjection >() && passed;
 
     passed = RunTapLayoutSelfCheck< TetrahedralProjection >() && passed;
+    passed = RunTapLayoutSelfCheck< OctahedralProjection >() && passed;
 
     passed = RunTableWriterSelfCheck() && passed;
 
@@ -5267,17 +5344,23 @@ int main( int argc, char** argv )
 
     {
         EvaluationSettings optimizerSettings;
-        optimizerSettings.m_baseResolution = g_paperBaseResolution;
+        // The base resolution follows the MAP, not the paper.
+        // Everything built from these settings - the reference frames, the reference preimages and the objective - is sized by the chain the runtime will allocate, so a fit at 256 has a 256 reference rather than a 128 one paired with a 256 approximation, which is what the size assertion in PreimageError catches.
+        // The conformance test keeps the paper's 128 of its own accord, because reproducing the published tables is a question about that resolution, and the HDRI stages apply the same map rule again to the ingest and the scoring.
+        optimizerSettings.m_baseResolution = GetProbeMapBaseResolution( projection );
         optimizerSettings.m_gridSize = g_conformanceGridSize;
         optimizerSettings.m_supersampleRate = g_conformanceSupersampleRate;
 
         // The frame every map-generic path below builds against.
-        // The cubemap one is named because the cube-only checks take it by type; the tetrahedral one is the same MapReferenceFrame over the other projection, and the two are never both used by one run.
+        // The cubemap one is named because the cube-only checks take it by type; the other two are the same MapReferenceFrame over their own projections, and only one of the three is ever used by a run.
         CubeReferenceFrame optimizerFrame;
         optimizerFrame.Initialize( optimizerSettings.m_baseResolution );
 
         MapReferenceFrame< TetrahedralProjection > tetrahedralFrame;
         tetrahedralFrame.Initialize( optimizerSettings.m_baseResolution );
+
+        MapReferenceFrame< OctahedralProjection > octahedralFrame;
+        octahedralFrame.Initialize( optimizerSettings.m_baseResolution );
 
         // Printed before anything runs, because it decides what every table produced here means. 
         // A table fitted with one curve and selected with another is a quality loss with no error attached to it.
@@ -5305,13 +5388,15 @@ int main( int argc, char** argv )
             hdriSettings.m_force = hdriForce;
             hdriSettings.m_samples = hdriSamples;
             hdriSettings.m_ingest.m_equirectWidth = hdriEquirect;
-            hdriSettings.m_ingest.m_baseWidth = optimizerSettings.m_baseResolution;
+            // The projected base maps, the references and the scoring all run at the map's own base, so a fit at 256 is measured on a 256 chain rather than against the cubemap's 128.
+            hdriSettings.m_ingest.m_baseWidth = GetProbeMapBaseResolution( projection );
             hdriSettings.m_curve = curve;
             hdriSettings.m_evaluation = optimizerSettings;
+            hdriSettings.m_evaluation.m_baseResolution = GetProbeMapBaseResolution( projection );
 
             // The checkpoint being validated carries the grid the FIT trained at, and this is the settings object the validation loads it with, so it has to name that grid rather than the harness one.
             // Nothing about how the validation scores changes: the published-table rows in the same report are the control for that, and they read the same either way.
-            hdriSettings.m_evaluation.m_gridSize = g_fitGridSize;
+            hdriSettings.m_evaluation.m_gridSize = GetProbeMapFitGridSize( projection );
             hdriSettings.m_map = projection;
             hdriSettings.m_shape = fitShape;
             hdriSettings.pCheckpointPath = checkpointPath;
@@ -5348,7 +5433,7 @@ int main( int argc, char** argv )
         selection.m_pWriteHeaderPath = writeHeaderRequested ? headerOutputPath : nullptr;
         selection.m_pWriteBinaryPath = writeBinaryRequested ? binaryOutputPath : nullptr;
 
-        // Each profile is a distinct template instantiation, which is the point of the concept-not-base-class design, and so is each map: the two together are the four instantiations below. 
+        // Each profile is a distinct template instantiation, which is the point of the concept-not-base-class design, and so is each map: the two together are the instantiations below. 
         // A third profile or map adds a branch here and an explicit instantiation at the bottom of the translation units that hold the templated definitions.
         if ( projection == ProbeMap::Tetrahedron )
         {
@@ -5359,6 +5444,17 @@ int main( int argc, char** argv )
             else
             {
                 passed = RunSelectedChecks( tetrahedralFrame, ProfileGGX( curve, LobeConvention::NDFCosineHemisphere ), optimizerSettings, selection, fitShape ) && passed;
+            }
+        }
+        else if ( projection == ProbeMap::Octahedral )
+        {
+            if ( isBeckmann )
+            {
+                passed = RunSelectedChecks( octahedralFrame, ProfileBeckmann( curve, LobeConvention::NDFCosineHemisphere ), optimizerSettings, selection, fitShape ) && passed;
+            }
+            else
+            {
+                passed = RunSelectedChecks( octahedralFrame, ProfileGGX( curve, LobeConvention::NDFCosineHemisphere ), optimizerSettings, selection, fitShape ) && passed;
             }
         }
         else if ( isBeckmann )

@@ -546,16 +546,21 @@ namespace FilterFitter
 
     template void ComputeDownsampleFootprint< CubeProjection >( uint32_t, uint32_t, uint32_t, uint32_t, JacobianWeighting, DownsampleFootprint& );
     template void ComputeDownsampleFootprint< TetrahedralProjection >( uint32_t, uint32_t, uint32_t, uint32_t, JacobianWeighting, DownsampleFootprint& );
+    template void ComputeDownsampleFootprint< OctahedralProjection >( uint32_t, uint32_t, uint32_t, uint32_t, JacobianWeighting, DownsampleFootprint& );
 
     template void DownsampleLevel< CubeProjection >( std::vector<double> const&, uint32_t, JacobianWeighting, std::vector<double>& );
     template void DownsampleLevel< TetrahedralProjection >( std::vector<double> const&, uint32_t, JacobianWeighting, std::vector<double>& );
+    template void DownsampleLevel< OctahedralProjection >( std::vector<double> const&, uint32_t, JacobianWeighting, std::vector<double>& );
 
     template void UpsampleLevel< CubeProjection >( std::vector<double> const&, uint32_t, JacobianWeighting, std::vector<double>& );
     template void UpsampleLevel< TetrahedralProjection >( std::vector<double> const&, uint32_t, JacobianWeighting, std::vector<double>& );
+    template void UpsampleLevel< OctahedralProjection >( std::vector<double> const&, uint32_t, JacobianWeighting, std::vector<double>& );
 
     template class UpsampleOperator< CubeProjection >;
     template class UpsampleOperator< TetrahedralProjection >;
+    template class UpsampleOperator< OctahedralProjection >;
 
     template UpsampleOperator< CubeProjection > const& GetUpsampleOperator< CubeProjection >( uint32_t, uint32_t, JacobianWeighting );
     template UpsampleOperator< TetrahedralProjection > const& GetUpsampleOperator< TetrahedralProjection >( uint32_t, uint32_t, JacobianWeighting );
+    template UpsampleOperator< OctahedralProjection > const& GetUpsampleOperator< OctahedralProjection >( uint32_t, uint32_t, JacobianWeighting );
 }

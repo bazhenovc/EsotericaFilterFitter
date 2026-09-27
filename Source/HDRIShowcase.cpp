@@ -232,4 +232,5 @@ namespace FilterFitter
 
     template void ComposeShowcaseImage< CubeProjection >( ShowcaseSource const&, ShowcaseImage& );
     template void ComposeShowcaseImage< TetrahedralProjection >( ShowcaseSource const&, ShowcaseImage& );
+    template void ComposeShowcaseImage< OctahedralProjection >( ShowcaseSource const&, ShowcaseImage& );
 }

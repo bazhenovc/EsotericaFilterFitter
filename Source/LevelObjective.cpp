@@ -3,6 +3,7 @@
 
 #include "CubeReferenceFrame.h"
 #include "MapProjection.h"
+#include "OctahedralProjection.h"
 #include "ParallelFor.h"
 #include "PreimageError.h"
 #include "ProfileBeckmann.h"
@@ -480,5 +481,7 @@ namespace FilterFitter
     template class LevelObjective< CubeReferenceFrame, ProfileBeckmann >;
 
     template class LevelObjective< MapReferenceFrame< TetrahedralProjection >, ProfileGGX >;
+    template class LevelObjective< MapReferenceFrame< OctahedralProjection >, ProfileGGX >;
     template class LevelObjective< MapReferenceFrame< TetrahedralProjection >, ProfileBeckmann >;
+    template class LevelObjective< MapReferenceFrame< OctahedralProjection >, ProfileBeckmann >;
 }

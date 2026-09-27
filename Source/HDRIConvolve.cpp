@@ -387,6 +387,51 @@ namespace FilterFitter
             {
                 error.m_approximatePeak = approximateLuminance;
             }
+
+            //  Diagnostic region of this texel
+            //-------------------------------------------------------------------------
+            //  The face comes from the frame's own texel record, so the map's decomposition is used rather than reconstructed.
+            //  The band comes from the Jacobian at the texel's centre: the direction is unit, so dividing by its L1 norm gives the map's own parameterization variable p, and J = 1 / |p|^3 is the density the projection derives.
+            //  Compiled only for the octahedral map: the other two have no band structure to report, and leaving them out entirely means their path is not merely unaffected but uninstantiated.
+            //-------------------------------------------------------------------------
+
+            if constexpr ( ProbeMapOf< TMap >::Value == ProbeMap::Octahedral )
+            {
+                MapTexel const& texel = frame.GetTexel( texelIndex );
+
+                double const l1Norm = std::fabs( texel.m_dir[0] ) + std::fabs( texel.m_dir[1] ) + std::fabs( texel.m_dir[2] );
+                FF_ASSERT( l1Norm > 0.0 );
+
+                double const parameterizedX = texel.m_dir[0] / l1Norm;
+                double const parameterizedY = texel.m_dir[1] / l1Norm;
+                double const parameterizedZ = texel.m_dir[2] / l1Norm;
+
+                double const parameterizedSquared = ( parameterizedX * parameterizedX ) + ( parameterizedY * parameterizedY ) + ( parameterizedZ * parameterizedZ );
+
+                double const jacobian = 1.0 / ( parameterizedSquared * std::sqrt( parameterizedSquared ) );
+
+                uint32_t const band = ( jacobian < 2.0 ) ? 0u : ( ( jacobian < 4.0 ) ? 1u : 2u );
+                uint32_t const face = ( texel.m_face < ConvolutionError::NumMaxFaces ) ? texel.m_face : ( ConvolutionError::NumMaxFaces - 1u );
+                uint32_t const region = ( face * ConvolutionError::NumRegionBands ) + band;
+
+                // Recomputed from the two luminances rather than reusing the walk's own difference.
+                // The reference term below already uses referenceLuminance and the count already increments, so if this diagnostic reports a zero absolute sum with a non-zero reference sum, the only way that can be true is if the two terms are not the same quantity.
+                // Taking the difference here from the same two operands the reference term uses removes that possibility: the two are then the same expression by construction, and a zero can only mean the luminances are equal.
+                double const absoluteDifference = std::fabs( referenceLuminance - approximateLuminance );
+
+                error.m_regionAbsoluteSum[region] += absoluteDifference * solidAngle;
+                error.m_regionReferenceSum[region] += std::fabs( referenceLuminance ) * solidAngle;
+                ++error.m_regionCount[region];
+
+                if ( absoluteDifference > error.m_regionMaxAbsolute[region] )
+                {
+                    error.m_regionMaxAbsolute[region] = absoluteDifference;
+                }
+
+                error.m_faceAbsoluteSum[face] += absoluteDifference * solidAngle;
+                error.m_faceReferenceSum[face] += std::fabs( referenceLuminance ) * solidAngle;
+                ++error.m_faceCount[face];
+            }
         }
 
         if ( referenceSum > 0.0 )
@@ -410,10 +455,13 @@ namespace FilterFitter
 
     template void ConvolveReference< CubeProjection, ProfileGGX >( std::vector<HDRIImage> const&, ProfileGGX const&, uint32_t, uint32_t, HDRIImage& );
     template void ConvolveReference< TetrahedralProjection, ProfileGGX >( std::vector<HDRIImage> const&, ProfileGGX const&, uint32_t, uint32_t, HDRIImage& );
+    template void ConvolveReference< OctahedralProjection, ProfileGGX >( std::vector<HDRIImage> const&, ProfileGGX const&, uint32_t, uint32_t, HDRIImage& );
 
     template void ConvolveTable< CubeProjection >( std::vector<HDRIImage> const&, CoefficientTable const&, uint32_t, uint32_t, HDRIImage& );
     template void ConvolveTable< TetrahedralProjection >( std::vector<HDRIImage> const&, CoefficientTable const&, uint32_t, uint32_t, HDRIImage& );
+    template void ConvolveTable< OctahedralProjection >( std::vector<HDRIImage> const&, CoefficientTable const&, uint32_t, uint32_t, HDRIImage& );
 
     template void CompareConvolutions< CubeProjection >( HDRIImage const&, HDRIImage const&, ConvolutionError& );
     template void CompareConvolutions< TetrahedralProjection >( HDRIImage const&, HDRIImage const&, ConvolutionError& );
+    template void CompareConvolutions< OctahedralProjection >( HDRIImage const&, HDRIImage const&, ConvolutionError& );
 }
