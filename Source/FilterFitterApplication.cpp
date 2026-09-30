@@ -22,6 +22,7 @@
 #include "TableWriter.h"
 #include "LevelWidthCurve.h"
 #include "ReferencePreimage.h"
+#include "ChartReconstruction.h"
 
 #include <cerrno>
 #include <chrono>
@@ -124,6 +125,17 @@ static constexpr uint32_t g_conformanceGridSize = 4;
 // Conformance asks whether this tool reproduces the paper's tables at the sample the paper's numbers were measured on, so its grid is fixed by that comparison.
 // The fit wants the densest training sample it can pay for, because a sample that is too coarse caps what the table can learn no matter what the optimizer does: the objective it descends is then an average over too few directions, and the table is free to be wrong between them.
 static constexpr uint32_t g_conformanceSupersampleRate = 1;
+
+// The budget the weight-floor probe gives the convex weight subproblem, which is not the budget the fit gives it.
+//
+// The fit already runs this subproblem: FitSettings::m_polishRounds is 4 rounds of m_polishIterations, which is 40.
+// So a probe that re-ran the stage at the fit's own budget could only report where the fit's stage stopped, which is not the question.
+// The question is whether that budget was enough, and the only way to ask it is to give the same subproblem far more and see whether the answer moves.
+//
+// Six rounds of 600 is two orders above the fit's 160 iterations per level.
+// The cost is bounded by the rounds rather than the iterations because the acceptance rule stops the level at the first round that does not improve, which on a converged level is the first one.
+static constexpr uint32_t g_weightFloorRounds = 6;
+static constexpr uint32_t g_weightFloorIterations = 600;
 
 static constexpr double g_pi = std::numbers::pi_v<double>;
 
@@ -3489,6 +3501,175 @@ static bool RunWeightSubspaceProbe( CubeReferenceFrame const& baseFrame, TProfil
     return true;
 }
 
+// Weight floor at the fitted point
+//-------------------------------------------------------------------------
+// What limits a fitted table: where its taps sit, or how they are weighted?
+//
+// The fit already answers half of this by construction, and the half it answers is easy to mistake for the whole.
+// Its convex weight stage runs after the joint search on every level, so the weights it stores are not arbitrary - they are the best weights that stage could reach in 4 rounds of 40 iterations.
+// Re-running that stage at its own budget would therefore report where it stopped and nothing else, which is why the budget here is two orders larger: the question is whether the budget was enough, and only a larger one can ask it.
+//
+// A drop of a few percent says the weight subspace is spent - the stored weights are as good as any weights at this placement - and what is left is the placement, that is the tap and frame structure, which no weight solver can move.
+// A large drop says the optimizer walked away from value it could have had at its own objective, and the weights are where the remaining error lives.
+//
+// The start is the fitted table rather than a published one, because the claim is about the table this configuration produces.
+// It is obtained by running the fit, which is the call --fit makes and therefore resumes from a completed checkpoint for free: a configuration that has been fitted reports without refitting it, and one that has not is fitted here rather than reported on from a point nobody fitted.
+//
+// Cube-only checks sit behind a CubeReferenceFrame guard because their expected numbers are the paper's cubemap construction.
+// This one has no expected numbers, so it runs for every map - and a non-cube map is exactly where the question is open.
+
+template< typename TFrame, typename TProfile >
+static bool RunWeightFloor
+(
+    TFrame const& baseFrame,
+    TProfile const& profile,
+    EvaluationSettings const& settings,
+    TableShape const& shape,
+    char const* pCheckpointPath
+)
+{
+    std::printf( "\n" );
+    std::printf( "weight floor at the fitted point\n" );
+
+    // The objective measured here is the one the fit descended, not the one conformance is scored on.
+    // A fit trains at its own grid and at the map's own base resolution, so scoring the floor at the harness grid would report on a table nothing produces - the same reason the fit probes build their own settings.
+    FitSettings fitSettings;
+    fitSettings.m_evaluation = settings;
+    fitSettings.m_evaluation.m_gridSize = GetProbeMapFitGridSize( shape.m_projection );
+    fitSettings.m_evaluation.m_baseResolution = GetProbeMapBaseResolution( shape.m_projection );
+    fitSettings.m_shape = shape;
+
+    // Null, because a shape the paper did not publish has no published table to refine - the fit falls back to its analytic seed, which is how a non-cube table is produced in the first place.
+    fitSettings.m_pSeed = nullptr;
+
+    fitSettings.m_pCheckpointPath = pCheckpointPath;
+    fitSettings.m_levelLimit = CoefficientTable::NumLevels;
+    fitSettings.m_optimizer.m_maxIterations = 60;
+    fitSettings.m_optimizer.m_memorySize = 20;
+    fitSettings.m_verbose = true;
+
+    std::printf
+    (
+        "  %s at base %u, trained at grid %u, then searched with %u rounds of %u iterations\n",
+        shape.m_name, fitSettings.m_evaluation.m_baseResolution,
+        fitSettings.m_evaluation.m_gridSize, g_weightFloorRounds, g_weightFloorIterations
+    );
+
+    // Resumes when the checkpoint is complete, which is what makes a second run of this seconds rather than minutes.
+    FitResult const fit = RunTableFit( baseFrame, profile, fitSettings );
+
+    if( !fit.m_ok )
+    {
+        std::printf( "  FAIL: the fit this probe starts from did not run, so there is no point to measure\n" );
+        return false;
+    }
+
+    std::printf( "\n  %-6s %-12s %-12s %-10s %-11s %-8s %-6s\n",
+                 "level", "start", "floor", "drop", "iterations", "rounds", "free" );
+
+    for( uint32_t level = 0; level < CoefficientTable::NumLevels; ++level )
+    {
+        FitCheckpoint::LevelState const& state = fit.m_checkpoint.m_levels[level];
+
+        // A zero width is the identity, built from the closed form rather than searched, so there is no placement for a weight search to sit on and the level has nothing to report.
+        if( profile.GetWidth( level ) <= 0.0 )
+        {
+            std::printf( "  %-6u %-12s %-12s %-10s %-11s %-8s %-6s\n",
+                         level, "-", "-", "-", "-", "-", "mirror" );
+            continue;
+        }
+
+        if( state.m_parameters.empty() )
+        {
+            std::printf( "  %-6u %-12s %-12s %-10s %-11s %-8s %-6s\n",
+                         level, "-", "-", "-", "-", "-", "unfitted" );
+            continue;
+        }
+
+        LevelObjective< TFrame, TProfile > objective;
+        objective.Initialize( baseFrame, shape, profile, fitSettings.m_evaluation, level );
+
+        std::vector<double> parameters = state.m_parameters;
+
+        double const startL1 = objective.Evaluate( parameters );
+
+        // Built through the same builder the fit's own stage uses, so the two cannot disagree about which index is the weight - and it is the same builder that catches the tap-by-position trap, because it walks the parameter layout rather than the tap list.
+        ParameterMask weightMask;
+        BuildParameterMask( objective.GetTapCount(), objective.GetActiveCoefficientCount(), true, weightMask );
+
+        OptimizerSettings floorSettings;
+        floorSettings.m_maxIterations = g_weightFloorIterations;
+        floorSettings.m_memorySize = 20;
+        floorSettings.m_pMask = &weightMask;
+
+        // Held by pointer by the frozen wrapper, so it has to outlive every round.
+        std::vector<double> normalisers;
+
+        double floorL1 = startL1;
+        uint32_t totalIterations = 0;
+        uint32_t acceptedRounds = 0;
+
+        for( uint32_t round = 0; round < g_weightFloorRounds; ++round )
+        {
+            objective.CaptureNormalisers( parameters, normalisers );
+
+            FrozenNormaliserObjective< TFrame, TProfile > frozen;
+            frozen.m_pObjective = &objective;
+            frozen.m_pNormalisers = &normalisers;
+
+            OptimizerResult const result = MinimizeLBFGS( frozen, parameters, floorSettings );
+
+            totalIterations += result.m_iterations;
+
+            // The stage minimises the FROZEN objective, which is not the number being reported, so it is not a descent method for that number and its result is kept only when it genuinely improved - measured, unguarded it made some levels 3% worse.
+            // EvaluateFrozen clears the frozen normalisers before it returns, so this is the true objective and not a second frozen reading.
+            double const candidateL1 = objective.Evaluate( result.m_parameters );
+
+            if( candidateL1 < floorL1 )
+            {
+                parameters = result.m_parameters;
+                floorL1 = candidateL1;
+                ++acceptedRounds;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        double const drop = 100.0 * ( floorL1 - startL1 ) / startL1;
+
+        std::printf( "  %-6u %-12.6f %-12.6f %+-10.3f %-11u %-8u %-6u\n",
+                     level, startL1, floorL1, drop, totalIterations, acceptedRounds,
+                     objective.GetTapCount() * objective.GetActiveCoefficientCount() );
+
+        // The level's stored objective was measured through this same objective, so a disagreement means the settings here are not the ones the table was fitted with - which would make the row a statement about a different function.
+        if( ( state.m_objective > 0.0 ) && ( std::fabs( state.m_objective - startL1 ) > ( 1.0e-6 * state.m_objective ) ) )
+        {
+            std::printf
+            (
+                "         note: the checkpoint records %.6f for this level and this run scores the same point at %.6f\n",
+                state.m_objective, startL1
+            );
+        }
+
+        std::fflush( stdout );
+    }
+
+    std::printf( "\n  start and floor are the level's mean L1 before and after, measured at the fitted\n" );
+    std::printf( "  point on the fit's own objective, with the normaliser refreshed every round.\n" );
+    std::printf( "\n" );
+    std::printf( "  drop near zero means the stored weights are as good as any weights at this\n" );
+    std::printf( "  placement, so the placement - the tap and frame structure - is the ceiling and a\n" );
+    std::printf( "  weight solver has nothing left to claim.\n" );
+    std::printf( "  A large drop means the optimizer left that much at its own objective.\n" );
+    std::printf( "\n" );
+    std::printf( "  rows is the number of rounds that improved; it is below %u where an earlier\n", g_weightFloorRounds );
+    std::printf( "  round failed to improve and the level stopped there.\n" );
+
+    return true;
+}
+
 // Weight-gradient check
 //-------------------------------------------------------------------------
 // THE FAILURE MODE THIS GUARDS
@@ -4422,7 +4603,15 @@ static void RunOptimizerBenchmark()
 
 static void PrintUsage()
 {
-    std::printf( "\nusage: FilterFitter [--diagnostics] [--benchmark] [--dfg]\n" );
+    std::printf( "\nusage: FilterFitter [--diagnostics] [--benchmark] [--dfg] [--chart-reconstruction]\n" );
+    std::printf( "\n" );
+    std::printf( "  --chart-reconstruction\n" );
+    std::printf( "                  A mode of its own, with no fit and no corpus: sample a smooth\n" );
+    std::printf( "                  analytic field into each sphere-to-chart mapping at 128, 256 and\n" );
+    std::printf( "                  512, read it back the way a runtime reads it, and report the\n" );
+    std::printf( "                  reconstruction error split into reads that cross a face boundary\n" );
+    std::printf( "                  and reads that do not, with each chart's area and shape distortion\n" );
+    std::printf( "                  and how the error scales with resolution. Seconds.\n" );
     std::printf( "\n" );
     std::printf( "  Runs the per-stage self-checks and the published-table conformance test.\n" );
     std::printf( "\n" );
@@ -4527,6 +4716,13 @@ static void PrintUsage()
     std::printf( "                  published table and search, to measure how much the\n" );
     std::printf( "                  weight subspace alone has left to give. Minutes.\n" );
     std::printf( "\n" );
+    std::printf( "  --weight-floor  Freeze everything but the weight coefficients at the FITTED\n" );
+    std::printf( "                  table, on the fit's own objective, and search it far harder\n" );
+    std::printf( "                  than the fit's own convex stage does. Answers whether a table\n" );
+    std::printf( "                  is limited by where its taps sit or by how they are weighted.\n" );
+    std::printf( "                  Runs the fit first, which resumes from a completed checkpoint,\n" );
+    std::printf( "                  so a fitted configuration reports in seconds.\n" );
+    std::printf( "\n" );
     std::printf( "  --gradient-check  Compare the analytic weight gradient against a one-sided\n" );
     std::printf( "                  difference, per coefficient, at every level. Seconds. Also\n" );
     std::printf( "                  runs whenever the optimizer does, because a parameter-layout\n" );
@@ -4617,6 +4813,7 @@ struct RunSelection
     bool m_fitSeeded = false;
     bool m_seed = false;
     bool m_weightProbe = false;
+    bool m_weightFloor = false;
     bool m_gradientCheck = false;
     bool m_split = false;
     bool m_converge = false;
@@ -4720,6 +4917,14 @@ static bool RunSelectedChecks
         passed = RunTableFitCheck( frame, profile, settings, shape, selection.m_pSeededCheckpointPath, true ) && passed;
     }
 
+    // Deliberately outside the cube-only guard below.
+    // Those checks are cube-only because their expected values are the paper's cubemap construction; this one has no expected values, and the map whose weight floor is in question is not the cubemap.
+    // It starts from the fitted table, so it runs the fit - which resumes from a completed checkpoint - and therefore belongs with the fit dispatch rather than with the checks that read a published table.
+    if ( selection.m_weightFloor )
+    {
+        passed = RunWeightFloor( frame, profile, settings, shape, selection.m_pCheckpointPath ) && passed;
+    }
+
     if constexpr ( std::is_same_v< TFrame, CubeReferenceFrame > )
     {
         if ( selection.m_seed )
@@ -4791,6 +4996,7 @@ int main( int argc, char** argv )
     bool runFitSeeded = false;
     bool runSeed = false;
     bool runWeightProbe = false;
+    bool runWeightFloor = false;
     bool runGradientCheck = false;
     bool runSplit = false;
     bool runConverge = false;
@@ -4876,6 +5082,10 @@ int main( int argc, char** argv )
         {
             runWeightProbe = true;
         }
+        else if ( std::strcmp( pArgument, "--weight-floor" ) == 0 )
+        {
+            runWeightFloor = true;
+        }
         else if ( std::strcmp( pArgument, "--gradient-check" ) == 0 )
         {
             runGradientCheck = true;
@@ -4895,6 +5105,13 @@ int main( int argc, char** argv )
         else if ( std::strcmp( pArgument, "--reset" ) == 0 )
         {
             runReset = true;
+        }
+        else if ( std::strcmp( pArgument, "--chart-reconstruction" ) == 0 )
+        {
+            // A mode of its own, and it runs here for the same reason --help does: it needs no
+            // map, no table, no profile, no curve, no checkpoint and no corpus, so carrying it
+            // as state into the fit machinery would only give all of those a chance to matter.
+            return RunChartReconstruction() ? 0 : 1;
         }
         else if ( std::strcmp( pArgument, "--dfg" ) == 0 )
         {
@@ -5423,6 +5640,7 @@ int main( int argc, char** argv )
         selection.m_fitSeeded = runFitSeeded;
         selection.m_seed = runSeed;
         selection.m_weightProbe = runWeightProbe;
+        selection.m_weightFloor = runWeightFloor;
         selection.m_gradientCheck = runGradientCheck;
         selection.m_split = runSplit;
         selection.m_converge = runConverge;

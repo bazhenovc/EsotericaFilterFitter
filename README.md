@@ -120,7 +120,7 @@ A tetrahedral level at resolution R holds R x R texels over the whole sphere, wh
 
 A runtime that wants tetrahedral probes as accurate as cubemap ones at the same lobe width has to use a higher base resolution. The tool supports the tetrahedral map because a tetrahedral probe needs a table of its own, not because it is the better choice where six faces are available.
 
-An octahedral map is also supported, and it is **not shipped**: it is measured and kept as an alternative. Its parameterization sets an accuracy floor no fit of it has beaten, the tradeoff it offers is a smaller and cheaper filter, and the measurements and reasoning are in [Docs/Rendering/Octahedral Reflection Probes.md](../../Docs/Rendering/Octahedral%20Reflection%20Probes.md).
+An octahedral map is also supported, and it is **not shipped**: it is measured and kept as an alternative.
 
 An octahedral level is also one square over the whole sphere, so its texels carry about six times a cube level's solid angle in the same way a tetrahedral map's do. It should do better than the tetrahedral map at equal resolution, because its parameterization is near-uniform in texel footprint - each of the eight octant regions has fixed axis signs, so edges stay straight and the footprint distortion stays bounded - where the tetrahedral tile's is not. **Its measured accuracy has not been taken yet**: the table has been fitted and validated on the corpus once that measurement exists, and until then this paragraph is a geometric expectation rather than a result.
 
@@ -252,7 +252,7 @@ Results are written as EXR, one file per slice per level, under `External\Filter
 
 ### The DFG table
 
-The specular split of the environment lookup is the other half of the picture: `radiance * (F0 * scale + bias)`, where `scale` and `bias` are a 128x128 lookup over `N·V` and roughness. The engine used to evaluate that integral on the GPU every frame; this tool evaluates it offline at a sample count a frame cannot afford, and the engine uploads the result.
+The specular split of the environment lookup is the other half of the picture: `radiance * (F0 * scale + bias)`, where `scale` and `bias` are a 128x128 lookup over `N·V` and roughness. The engine used to evaluate that integral on the GPU; this tool evaluates it offline at a much higher sample count.
 
 ```
 FilterFitter.exe --dfg
